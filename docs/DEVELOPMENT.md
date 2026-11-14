@@ -41,10 +41,40 @@ The same build command compiles the two experimental fail-closed import stubs
 from `native/platform_dependency_stub.cpp` into
 `private/engine/fm27_native/platform-stubs/`. They supply the exact imported
 PartyWin and PlayFab Multiplayer names; any unexpected call is logged and
-terminates the worker instead of returning a fabricated result. EOS and Steam
-remain genuine runtime dependencies. These stubs are still not a substitute for
-a real local-engine match test; see
-[PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.md).
+terminates the worker instead of returning a fabricated result. Steam and EOS are loaded as fail-fast diagnostic probes in the current offline
+runtime; their unexpected calls terminate the worker rather than fabricating a
+successful platform response. The original game DLL is not modified. These
+probes and PartyWin/PlayFab stubs are not a substitute for a real local-engine
+match test; see [PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.md).
+
+## Native adapter registry
+
+`native/adapter_registry.json` is the source of truth for distribution-specific
+native adapters. Each enabled adapter has its own reference DLL identity,
+profile metadata, version file, generated compatibility header and
+`FM27Simulator.exe`. Shared runtime files and the fail-closed platform boundary
+remain under `private/engine/fm27_native`.
+
+The currently verified local reference is the Steam FM27 27.0.1 build
+`F79B0A34...`. Build it with:
+
+```bat
+.venv\\Scripts\\python.exe scripts\\build_native.py --adapter steam_27_0_1_2494687 --reference-dll "D:\\Games\\Football Manager 27\\fm_Data\\Plugins\\x86_64\\game_plugin.dll"
+```
+
+The runner selects an exact reference SHA256 automatically:
+
+```powershell
+.venv\\Scripts\\python.exe scripts/run.py --game-root "D:\\Games\\Football Manager 27" --adapter auto
+```
+
+An explicit `--adapter ID` is available for a deliberate compatibility trial.
+When more than one adapter is enabled and a DLL hash matches none, selection is
+required rather than silently treating an Epic build as Steam. The Epic slot is
+currently reserved but disabled: it will only be enabled after the exact local
+Epic DLL and its own validated ABI profile are available. Do not copy the
+upstream Epic profile into this branch as a substitute for matching local
+reference evidence.
 
 ## Run from source
 
