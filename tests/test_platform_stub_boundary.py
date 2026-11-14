@@ -205,6 +205,22 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('loaded_image_differences', scanner)
         self.assertNotIn('if(value==1)candidates.push_back', scanner)
 
+    def test_activation_scan_timestamps_only_real_transitions_and_reports_page_context(self):
+        scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
+        self.assertIn('first_change_ms', scanner)
+        self.assertIn('last_change_ms', scanner)
+        self.assertIn('zero_ms,-1', scanner)
+        self.assertIn('candidate.zero_ms<0', scanner)
+        self.assertIn('VirtualQuery(base+rva', scanner)
+        self.assertIn('memory_protect', scanner)
+        self.assertIn('disk_qword', scanner)
+        self.assertIn('at_load_qword', scanner)
+        self.assertIn('final_qword', scanner)
+        self.assertIn('fast_sample_interval_ms=25', scanner)
+        self.assertIn('fast_sample_window_ms=500', scanner)
+        self.assertIn('if(candidate.changes||candidate.offset==gate_offset)', scanner)
+        self.assertNotIn('candidate.first==0?0:-1', scanner)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
