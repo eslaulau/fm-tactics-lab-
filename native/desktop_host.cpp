@@ -563,11 +563,11 @@ static void CALLBACK desktop_steam_dialog_win_event_callback(
     const auto process_json=desktop_json_string(process_name);
     const char* phase=event==EVENT_OBJECT_CREATE?"win_event_create":"win_event_show";
     fprintf(log_file,
-        "{\\"event\\":\\"desktop_top_level_window_event_observed\\",\\"phase\\":\\"%s\\",\\"event_code\\":%lu,"
-        "\\"event_thread_id\\":%lu,\\"event_time\\":%lu,\\"pid\\":%lu,\\"thread_id\\":%lu,"
-        "\\"hwnd\\":\\"0x%llx\\",\\"visible\\":%s,\\"class\\":%s,\\"title\\":%s,\\"controls\\":%s,"
-        "\\"process_path\\":%s,\\"browser_process\\":%s,\\"steam_process\\":%s,"
-        "\\"steam_api_text_match\\":%s,\\"error_marker_match\\":%s}\\n",
+        "{\"event\":\"desktop_top_level_window_event_observed\",\"phase\":\"%s\",\"event_code\":%lu,"
+        "\"event_thread_id\":%lu,\"event_time\":%lu,\"pid\":%lu,\"thread_id\":%lu,"
+        "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,"
+        "\"process_path\":%s,\"browser_process\":%s,\"steam_process\":%s,"
+        "\"steam_api_text_match\":%s,\"error_marker_match\":%s}\n",
         phase,event,event_thread_id,event_time,process_id,window_thread_id,
         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
         visible?"true":"false",class_json.c_str(),title_json.c_str(),
@@ -586,7 +586,7 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
         EVENT_OBJECT_CREATE,EVENT_OBJECT_SHOW,nullptr,
         desktop_steam_dialog_win_event_callback,0,0,WINEVENT_OUTOFCONTEXT);
     fprintf(log_file,
-        "{\\"event\\":\\"desktop_window_event_hook_state\\",\\"installed\\":%s,\\"error\\":%lu}\\n",
+        "{\"event\":\"desktop_window_event_hook_state\",\"installed\":%s,\"error\":%lu}\n",
         event_hook?"true":"false",event_hook?ERROR_SUCCESS:GetLastError());
     fflush(log_file);
     while(InterlockedCompareExchange(&desktop_steam_window_watch_running,0,0)){
@@ -598,10 +598,10 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
         const ULONGLONG now=GetTickCount64();
         if(now-last_pulse>=1000){
             fprintf(log_file,
-                "{\\"event\\":\\"desktop_window_watch_pulse\\",\\"elapsed_ms\\":%llu,"
-                "\\"win_event_hook_installed\\":%s,\\"callbacks\\":%ld,\\"captured_windows\\":%ld,"
-                "\\"visible_windows\\":%ld,\\"browser_process_windows\\":%ld,"
-                "\\"standard_dialogs\\":%ld,\\"error_windows\\":%ld,\\"steam_text_matches\\":%ld}\\n",
+                "{\"event\":\"desktop_window_watch_pulse\",\"elapsed_ms\":%llu,"
+                "\"win_event_hook_installed\":%s,\"callbacks\":%ld,\"captured_windows\":%ld,"
+                "\"visible_windows\":%ld,\"browser_process_windows\":%ld,"
+                "\"standard_dialogs\":%ld,\"error_windows\":%ld,\"steam_text_matches\":%ld}\n",
                 static_cast<unsigned long long>(now-watch_started),event_hook?"true":"false",
                 InterlockedCompareExchange(&desktop_win_event_callback_count,0,0),
                 InterlockedCompareExchange(&desktop_win_event_candidate_count,0,0),
@@ -617,7 +617,7 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
     }
     if(event_hook){
         const BOOL unhooked=UnhookWinEvent(event_hook);
-        fprintf(log_file,"{\\"event\\":\\"desktop_window_event_hook_stopped\\",\\"success\\":%s}\\n",
+        fprintf(log_file,"{\"event\":\"desktop_window_event_hook_stopped\",\"success\":%s}\n",
             unhooked?"true":"false");
         fflush(log_file);
     }
