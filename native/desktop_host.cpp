@@ -377,9 +377,6 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
     EnumChildWindows(window,desktop_collect_child_window_text,reinterpret_cast<LPARAM>(&children));
     if(!desktop_contains_steam_api(title)&&!desktop_contains_steam_api(children.text))return TRUE;
     scan->matches++;
-    if(std::find(desktop_seen_steam_error_windows.begin(),
-                 desktop_seen_steam_error_windows.end(),window)!=desktop_seen_steam_error_windows.end())
-        return TRUE;
     DWORD process_id=0;
     const DWORD thread_id=GetWindowThreadProcessId(window,&process_id);
     wchar_t process_path[32768]={};
