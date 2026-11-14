@@ -38,7 +38,7 @@ static void platform_probe_fail(const char* api) {
     const USHORT frame_count = CaptureStackBackTrace(1, 16, frames, nullptr);
     const uintptr_t engine = reinterpret_cast<uintptr_t>(
         GetModuleHandleW(L"game_plugin.dll"));
-    std::size_t engine_size = 0;
+    uintptr_t engine_size = 0;
     if (engine) {
         const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(engine);
         if (dos->e_magic == IMAGE_DOS_SIGNATURE && dos->e_lfanew > 0 &&
