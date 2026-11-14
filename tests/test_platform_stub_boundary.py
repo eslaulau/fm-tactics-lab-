@@ -348,6 +348,18 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('PostMessageW', host)
         self.assertNotIn('SendMessageW', host)
 
+    def test_host_starts_steam_dialog_watch_before_loading_engine(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('desktop_steam_window_watch_thread', host)
+        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false)', host)
+        self.assertIn('steam_error_window_watch_started', host)
+        self.assertIn('steam_error_window_watch_stopped', host)
+        main = host[host.index('int wmain('):]
+        self.assertLess(
+            main.index('desktop_steam_window_watch_scope steam_window_watch;'),
+            main.index('LoadLibraryExW(image,nullptr')
+        )
+
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('std::recursive_mutex worker_log_lock', host)

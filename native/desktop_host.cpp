@@ -364,7 +364,7 @@ struct desktop_steam_window_scan {
     const char* phase=nullptr;
     unsigned matches=0;
 };
-static std::vector<HWND> desktop_seen_steam_error_windows;
+static std::map<HWND,ULONGLONG> desktop_steam_error_window_last_reported_ms;
 static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM parameter){
     auto* scan=reinterpret_cast<desktop_steam_window_scan*>(parameter);
     if(!scan)return TRUE;
@@ -393,24 +393,79 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
     const auto class_json=desktop_json_string(class_name);
     const auto children_json=desktop_json_string(children.text);
     const auto process_json=desktop_json_string(process_path[0]?std::wstring(process_path):std::wstring());
-    fprintf(log_file,
-        "{\"event\":\"steam_error_window_observed\",\"phase\":\"%s\",\"pid\":%lu,\"thread_id\":%lu,"
-        "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,\"process_path\":%s}\n",
-        scan->phase?scan->phase:"unknown",process_id,thread_id,
-        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
-        IsWindowVisible(window)?"true":"false",class_json.c_str(),title_json.c_str(),
-        children_json.c_str(),process_json.c_str());
-    desktop_seen_steam_error_windows.push_back(window);
+    {
+        // The load-time watcher polls while modal dialogs are open. Throttle a
+        // still-visible HWND, but allow the same handle to be reported again
+        // after a short gap in case Windows reuses it for another dialog.
+        std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+        const ULONGLONG now=GetTickCount64();
+        const auto previous=desktop_steam_error_window_last_reported_ms.find(window);
+        if(previous!=desktop_steam_error_window_last_reported_ms.end()&&
+           now-previous->second<250)return TRUE;
+        desktop_steam_error_window_last_reported_ms[window]=now;
+        fprintf(log_file,
+            "{\"event\":\"steam_error_window_observed\",\"phase\":\"%s\",\"pid\":%lu,\"thread_id\":%lu,"
+            "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,\"process_path\":%s}\n",
+            scan->phase?scan->phase:"unknown",process_id,thread_id,
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
+            IsWindowVisible(window)?"true":"false",class_json.c_str(),title_json.c_str(),
+            children_json.c_str(),process_json.c_str());
+    }
     return TRUE;
 }
-static void desktop_scan_steamapi_windows(const char* phase){
+static void desktop_scan_steamapi_windows(const char* phase,bool log_summary=true){
     if(!log_file)return;
     desktop_steam_window_scan scan={phase,0};
     EnumWindows(desktop_find_steam_error_window,reinterpret_cast<LPARAM>(&scan));
-    fprintf(log_file,"{\"event\":\"steam_error_window_scan_completed\",\"phase\":\"%s\",\"matches\":%u}\n",
-        phase?phase:"unknown",scan.matches);
+    if(log_summary)
+        fprintf(log_file,"{\"event\":\"steam_error_window_scan_completed\",\"phase\":\"%s\",\"matches\":%u}\n",
+            phase?phase:"unknown",scan.matches);
     fflush(log_file);
 }
+
+static volatile LONG desktop_steam_window_watch_running=0;
+static HANDLE desktop_steam_window_watch_handle=nullptr;
+static DWORD WINAPI desktop_steam_window_watch_thread(void*){
+    while(InterlockedCompareExchange(&desktop_steam_window_watch_running,0,0)){
+        // LoadLibraryExW can be blocked by modal dialogs raised from DLL
+        // initialization. Observe the shared desktop concurrently, not only
+        // after LoadLibraryExW has returned.
+        desktop_scan_steamapi_windows("load_window_watch",false);
+        Sleep(40);
+    }
+    return 0;
+}
+static bool desktop_start_steam_window_watch(){
+    if(InterlockedCompareExchange(&desktop_steam_window_watch_running,1,0)!=0)return true;
+    desktop_steam_window_watch_handle=CreateThread(
+        nullptr,0,desktop_steam_window_watch_thread,nullptr,0,nullptr);
+    if(!desktop_steam_window_watch_handle){
+        const DWORD error=GetLastError();
+        InterlockedExchange(&desktop_steam_window_watch_running,0);
+        fprintf(log_file,"{\"event\":\"steam_error_window_watch_start_failed\",\"error\":%lu}\n",error);
+        fflush(log_file);
+        return false;
+    }
+    fprintf(log_file,"{\"event\":\"steam_error_window_watch_started\",\"interval_ms\":40}\n");
+    fflush(log_file);
+    return true;
+}
+static void desktop_stop_steam_window_watch(){
+    if(!desktop_steam_window_watch_handle)return;
+    InterlockedExchange(&desktop_steam_window_watch_running,0);
+    const DWORD wait=WaitForSingleObject(desktop_steam_window_watch_handle,3000);
+    fprintf(log_file,"{\"event\":\"steam_error_window_watch_stopped\",\"wait_result\":%lu}\n",wait);
+    fflush(log_file);
+    CloseHandle(desktop_steam_window_watch_handle);
+    desktop_steam_window_watch_handle=nullptr;
+}
+class desktop_steam_window_watch_scope {
+    bool active;
+public:
+    desktop_steam_window_watch_scope():active(desktop_start_steam_window_watch()){}
+    ~desktop_steam_window_watch_scope(){if(active)desktop_stop_steam_window_watch();}
+    bool started()const{return active;}
+};
 
 static void desktop_log_platform_module_state(const char* phase){
     struct ModuleEntry{const wchar_t* filename;const char* label;};
@@ -1812,6 +1867,10 @@ static int child(bool run_match){
         fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
     }
     if(!desktop_prepare_runtime_dll_search())return 81;
+    // Start before the DLL load so dialogs raised from TLS/DllMain or startup
+    // workers are recorded while they are visible. The RAII guard stops the
+    // watcher on every normal return path from wmain.
+    desktop_steam_window_watch_scope steam_window_watch;
     desktop_capture_thread_baseline();
     fprintf(log_file,"{\"event\":\"windows_load_started\"}\n");fflush(log_file);
     auto module=LoadLibraryExW(image,nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
