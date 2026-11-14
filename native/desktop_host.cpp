@@ -1869,7 +1869,7 @@ static int child(bool run_match){
     if(!desktop_prepare_runtime_dll_search())return 81;
     // Start before the DLL load so dialogs raised from TLS/DllMain or startup
     // workers are recorded while they are visible. The RAII guard stops the
-    // watcher on every normal return path from wmain.
+    // watcher when this child session returns.
     desktop_steam_window_watch_scope steam_window_watch;
     desktop_capture_thread_baseline();
     fprintf(log_file,"{\"event\":\"windows_load_started\"}\n");fflush(log_file);
