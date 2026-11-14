@@ -58,10 +58,19 @@ exit code.
 
 ## Validation status
 
+The Windows CI compiles the native host source against a temporary compile-only
+compatibility header; the header contains placeholder bytes and is never used
+for runtime or packaged output. The same CI compiles both x64 stub DLLs and
+runs `scripts/verify_platform_stub_exports.py` against the resulting PE files.
+That verifier compares the actual export-name sets against the pinned original
+engine import manifest, checks that all named exports share one fail-fast code
+target, and confirms that the only imported runtime module is KERNEL32.dll.
+
 The Python resolver tests cover known directory layouts, split dependencies,
 conflicting duplicate DLLs, and bundle-only stub selection. Source-level tests
-check all 39 exact exports, fail-fast behavior, and the IAT-binding guard. A
-Windows x64 MSVC build and a real local-engine match are still required before
-this isolation can be considered validated. Until then, describe it as an experimental
+check the 39 exact manifest exports, fail-fast behavior, and the host IAT guard.
+A full native build using the actual local game_plugin.dll and a real local
+engine match are still required before this isolation can be considered
+validated. Until then, describe it as an experimental
 fail-closed loader boundary, not as proof that the two services are unused at
 runtime.
