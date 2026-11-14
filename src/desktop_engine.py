@@ -52,7 +52,6 @@ def initialize(root):
     close_leases()
     os.environ.pop('FM27_EXPECTED_DLL_SHA256', None)
     native = root / 'fm27_native'
-    game = Path(os.environ['FM27_GAME_ROOT']) if os.environ.get('FM27_GAME_ROOT') else native
     game_root = Path(os.environ['FM27_GAME_ROOT']) if os.environ.get('FM27_GAME_ROOT') else None
     game = game_root if game_root is not None else native
     plugins = game / 'fm_Data/Plugins/x86_64' if game_root is not None else native/'libs'
