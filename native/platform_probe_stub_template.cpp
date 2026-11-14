@@ -25,7 +25,7 @@ static char* append_hex(char* out, uintptr_t value) {
 }
 
 static void platform_probe_fail(const char* api) {
-    char event[4096];
+    char event[2048];
     char* cursor = event;
     cursor = append_text(cursor,
         "{\"event\":\"platform_probe_unexpected_call\",\"module\":\"");
@@ -38,13 +38,25 @@ static void platform_probe_fail(const char* api) {
     const USHORT frame_count = CaptureStackBackTrace(1, 16, frames, nullptr);
     const uintptr_t engine = reinterpret_cast<uintptr_t>(
         GetModuleHandleW(L"game_plugin.dll"));
+    std::size_t engine_size = 0;
+    if (engine) {
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(engine);
+        if (dos->e_magic == IMAGE_DOS_SIGNATURE && dos->e_lfanew > 0 &&
+            dos->e_lfanew < 0x100000) {
+            const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+                engine + static_cast<std::uintptr_t>(dos->e_lfanew));
+            if (nt->Signature == IMAGE_NT_SIGNATURE &&
+                nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+                engine_size = nt->OptionalHeader.SizeOfImage;
+        }
+    }
     for (USHORT index = 0; index < frame_count; ++index) {
         if (index) *cursor++ = ',';
         const uintptr_t address = reinterpret_cast<uintptr_t>(frames[index]);
         cursor = append_text(cursor, "{\"address\":\"");
         cursor = append_hex(cursor, address);
         cursor = append_text(cursor, "\"");
-        if (engine && address >= engine) {
+        if (engine && address >= engine && address - engine < engine_size) {
             cursor = append_text(cursor, ",\"engine_rva\":\"");
             cursor = append_hex(cursor, address - engine);
             cursor = append_text(cursor, "\"");
