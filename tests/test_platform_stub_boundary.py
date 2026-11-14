@@ -371,6 +371,17 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
         self.assertIn('process_path', host)
 
+    def test_host_uses_win_event_hook_for_transient_dialogs(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('SetWinEventHook', host)
+        self.assertIn('EVENT_OBJECT_CREATE', host)
+        self.assertIn('EVENT_OBJECT_SHOW', host)
+        self.assertIn('WINEVENT_OUTOFCONTEXT', host)
+        self.assertIn('desktop_steam_dialog_win_event_callback', host)
+        self.assertIn('steam_dialog_win_event_observed', host)
+        self.assertIn('PeekMessageW', host)
+        self.assertIn('UnhookWinEvent', host)
+
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('std::recursive_mutex worker_log_lock', host)
