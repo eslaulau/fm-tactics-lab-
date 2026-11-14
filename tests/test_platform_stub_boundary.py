@@ -176,7 +176,8 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('single_step_exceptions', self.host)
         self.assertIn('cpp_exceptions', self.host)
         self.assertIn('exception_context', self.host)
-        self.assertIn('CaptureStackBackTrace', self.host)
+        self.assertIn('RtlLookupFunctionEntry', self.host)
+        self.assertIn('RtlVirtualUnwind', self.host)
 
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
