@@ -352,7 +352,8 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
     def test_host_starts_steam_dialog_watch_before_loading_engine(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('desktop_steam_window_watch_thread', host)
-        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
+        self.assertIn('desktop_scan_steamapi_windows("after_windows_load")', host)
+        self.assertIn('desktop_scan_steamapi_windows("activation_gate_sample")', host)
         self.assertIn('steam_error_window_watch_started', host)
         self.assertIn('steam_error_window_watch_stopped', host)
         child = host[host.index('static int child(bool run_match)'):]
@@ -368,7 +369,8 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('steam_dialog_candidate_observed', host)
         self.assertIn('visible_standard_dialogs', host)
         self.assertIn('steam_error_window_watch_pulse', host)
-        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
+        self.assertIn('desktop_scan_steamapi_windows("after_windows_load")', host)
+        self.assertIn('desktop_scan_steamapi_windows("activation_gate_sample")', host)
         self.assertIn('process_path', host)
 
     def test_host_uses_win_event_hook_for_transient_dialogs(self):
@@ -385,7 +387,9 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('desktop_win_event_candidate_count', host)
         watcher = host[host.index('static DWORD WINAPI desktop_steam_window_watch_thread'):host.index('static bool desktop_start_steam_window_watch')]
         self.assertNotIn('desktop_scan_steamapi_windows', watcher)
-        self.assertNotIn('EnumWindows', watcher)
+        self.assertNotIn('EnumWindows(', watcher)
+        self.assertIn('Sleep(10)', watcher)
+        self.assertIn('InterlockedCompareExchange(&desktop_win_event_candidate_count', watcher)
 
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
