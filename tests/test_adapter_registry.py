@@ -40,7 +40,7 @@ class NativeAdapterRegistryTests(unittest.TestCase):
         self.assertIsNone(epic['reference_sha256'])
         with self.assertRaisesRegex(ValueError, 'not ready'):
             adapter_spec('epic_27_0_1')
-        with self.assertRaisesRegex(ValueError, 'not ready'):
+        with self.assertRaisesRegex(ValueError, '尚未准备好'):
             select_adapter(self.registry, STEAM_SHA, 'epic_27_0_1')
 
     def test_explicit_adapter_selection_is_supported_for_compatibility_trials(self):
