@@ -219,12 +219,14 @@ def initialize(root):
         env = os.environ.copy()
         env.pop('FM27_EXPECTED_DLL_SHA256', None)
         diagnostic_error = None
+        exit_code = None
         try:
             checked = subprocess.run(
                 [str(executable), '--check-image', str(dll)],
                 env=env, capture_output=True, timeout=30,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            exit_code = checked.returncode
             rows = []
             for line in checked.stdout.decode('utf8', errors='replace').splitlines():
                 try:
@@ -243,12 +245,12 @@ def initialize(root):
                 'message': '关键接口或布局不匹配：' + str(validation.get('reason')) +
                            '，位置 ' + hex(validation.get('rva', 0))
             }
-        if checked.returncode != 0 or not validation:
+        if exit_code != 0 or not validation:
             close_leases()
             return {
                 **status, 'reason': 'preflight_failed', 'diagnostics': rows,
                 'diagnostic_error': diagnostic_error,
-                'preflight_exit_code': checked.returncode,
+                'preflight_exit_code': exit_code,
                 'message': '引擎未通过原生检查，请查看诊断信息。'
             }
 
