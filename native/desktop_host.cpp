@@ -473,6 +473,8 @@ static volatile LONG desktop_win_event_candidate_count=0;
 static volatile LONG desktop_win_event_dialog_count=0;
 static volatile LONG desktop_win_event_error_count=0;
 static volatile LONG desktop_win_event_steam_count=0;
+static volatile LONG desktop_win_event_browser_count=0;
+static volatile LONG desktop_win_event_visible_count=0;
 static HANDLE desktop_steam_window_watch_handle=nullptr;
 
 static std::wstring desktop_read_window_text_fast(HWND window){
@@ -494,30 +496,34 @@ static BOOL CALLBACK desktop_collect_child_window_text_fast(HWND window,LPARAM p
     collector->text+=value;
     return TRUE;
 }
+static bool desktop_is_browser_process_path(const std::wstring& path){
+    const auto separator=path.find_last_of(L"\\/");
+    std::wstring name=separator==std::wstring::npos?path:path.substr(separator+1);
+    std::transform(name.begin(),name.end(),name.begin(),
+        [](wchar_t character){return static_cast<wchar_t>(std::towlower(character));});
+    return name==L"msedge.exe"||name==L"chrome.exe"||
+           name==L"msedgewebview2.exe"||name==L"chrome_proxy.exe"||
+           name==L"msedge_proxy.exe"||name==L"electron.exe"||
+           name==L"fm tactics lab.exe"||name==L"fm-tactics-lab.exe";
+}
+static bool desktop_is_steam_process_path(const std::wstring& path){
+    const auto separator=path.find_last_of(L"\\/");
+    std::wstring name=separator==std::wstring::npos?path:path.substr(separator+1);
+    std::transform(name.begin(),name.end(),name.begin(),
+        [](wchar_t character){return static_cast<wchar_t>(std::towlower(character));});
+    return name==L"steam.exe"||name==L"steamwebhelper.exe";
+}
 static void CALLBACK desktop_steam_dialog_win_event_callback(
     HWINEVENTHOOK, DWORD event, HWND window, LONG object_id, LONG child_id,
     DWORD event_thread_id, DWORD event_time){
     if(!window||object_id!=OBJID_WINDOW||child_id!=CHILDID_SELF)return;
     if(event!=EVENT_OBJECT_CREATE&&event!=EVENT_OBJECT_SHOW)return;
     InterlockedIncrement(&desktop_win_event_callback_count);
-    // We only emit top-level windows. Child controls are collected as text
-    // evidence, but the dialog's root HWND is the identity we need.
+    // Only top-level HWNDs are identities for taskbar-visible windows. The
+    // callback also records ordinary visible captions, not just Steam/error
+    // strings, because Chromium/WebView popups may have neutral titles.
     HWND root=GetAncestor(window,GA_ROOT);
     if(root&&root!=window)return;
-    const auto title=desktop_read_window_text_fast(window);
-    const auto class_name=desktop_window_class(window);
-    const bool standard_dialog=class_name==L"#32770";
-    const bool steam_title=desktop_contains_steam_api(title);
-    const bool error_title=desktop_contains_error_marker(title);
-    if(!standard_dialog&&!steam_title&&!error_title)return;
-    InterlockedIncrement(&desktop_win_event_candidate_count);
-    if(standard_dialog)InterlockedIncrement(&desktop_win_event_dialog_count);
-    if(error_title)InterlockedIncrement(&desktop_win_event_error_count);
-    desktop_fast_window_text_collector children={};
-    EnumChildWindows(window,desktop_collect_child_window_text_fast,reinterpret_cast<LPARAM>(&children));
-    const bool has_steam=steam_title||desktop_contains_steam_api(children.text);
-    const bool has_error=error_title||desktop_contains_error_marker(children.text);
-    if(has_steam)InterlockedIncrement(&desktop_win_event_steam_count);
     DWORD process_id=0;
     const DWORD window_thread_id=GetWindowThreadProcessId(window,&process_id);
     wchar_t process_path[32768]={};
@@ -527,35 +533,60 @@ static void CALLBACK desktop_steam_dialog_win_event_callback(
         QueryFullProcessImageNameW(process,0,process_path,&length);
         CloseHandle(process);
     }
+    const std::wstring process_name=process_path[0]?std::wstring(process_path):std::wstring();
+    const bool browser_process=desktop_is_browser_process_path(process_name);
+    const bool steam_process=desktop_is_steam_process_path(process_name);
+    const bool visible=IsWindowVisible(window)!=FALSE;
+    const auto title=desktop_read_window_text_fast(window);
+    const auto class_name=desktop_window_class(window);
+    const bool standard_dialog=class_name==L"#32770";
+    const bool steam_title=desktop_contains_steam_api(title);
+    const bool error_title=desktop_contains_error_marker(title);
+    // Capture every visible top-level window transition, including windows
+    // whose captions are not diagnostic. Hidden CREATE events are retained
+    // only for browser/Steam processes or explicit dialog/error indicators.
+    if(!visible&&!browser_process&&!steam_process&&
+       !standard_dialog&&!steam_title&&!error_title)return;
+    InterlockedIncrement(&desktop_win_event_candidate_count);
+    if(visible)InterlockedIncrement(&desktop_win_event_visible_count);
+    if(browser_process)InterlockedIncrement(&desktop_win_event_browser_count);
+    if(standard_dialog)InterlockedIncrement(&desktop_win_event_dialog_count);
+    if(error_title)InterlockedIncrement(&desktop_win_event_error_count);
+    desktop_fast_window_text_collector children={};
+    EnumChildWindows(window,desktop_collect_child_window_text_fast,reinterpret_cast<LPARAM>(&children));
+    const bool has_steam=steam_title||desktop_contains_steam_api(children.text);
+    const bool has_error=error_title||desktop_contains_error_marker(children.text);
+    if(has_steam)InterlockedIncrement(&desktop_win_event_steam_count);
     const auto title_json=desktop_json_string(title);
     const auto class_json=desktop_json_string(class_name);
     const auto children_json=desktop_json_string(children.text);
-    const auto process_json=desktop_json_string(process_path[0]?std::wstring(process_path):std::wstring());
+    const auto process_json=desktop_json_string(process_name);
     const char* phase=event==EVENT_OBJECT_CREATE?"win_event_create":"win_event_show";
     fprintf(log_file,
-        "{\"event\":\"steam_dialog_win_event_observed\",\"phase\":\"%s\",\"event_code\":%lu,"
-        "\"event_thread_id\":%lu,\"event_time\":%lu,\"pid\":%lu,\"thread_id\":%lu,"
-        "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,"
-        "\"process_path\":%s,\"steam_api_text_match\":%s,\"error_marker_match\":%s}\n",
+        "{\\"event\\":\\"desktop_top_level_window_event_observed\\",\\"phase\\":\\"%s\\",\\"event_code\\":%lu,"
+        "\\"event_thread_id\\":%lu,\\"event_time\\":%lu,\\"pid\\":%lu,\\"thread_id\\":%lu,"
+        "\\"hwnd\\":\\"0x%llx\\",\\"visible\\":%s,\\"class\\":%s,\\"title\\":%s,\\"controls\\":%s,"
+        "\\"process_path\\":%s,\\"browser_process\\":%s,\\"steam_process\\":%s,"
+        "\\"steam_api_text_match\\":%s,\\"error_marker_match\\":%s}\\n",
         phase,event,event_thread_id,event_time,process_id,window_thread_id,
         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
-        IsWindowVisible(window)?"true":"false",class_json.c_str(),title_json.c_str(),
-        children_json.c_str(),process_json.c_str(),has_steam?"true":"false",has_error?"true":"false");
+        visible?"true":"false",class_json.c_str(),title_json.c_str(),
+        children_json.c_str(),process_json.c_str(),browser_process?"true":"false",
+        steam_process?"true":"false",has_steam?"true":"false",has_error?"true":"false");
     fflush(log_file);
 }
 
 static DWORD WINAPI desktop_steam_window_watch_thread(void*){
     const ULONGLONG watch_started=GetTickCount64();
     ULONGLONG last_pulse=watch_started;
-    // Out-of-context WinEvent hooks report window create/show transitions from
-    // other processes on this desktop. This thread intentionally performs no
-    // EnumWindows census: it must pump hook messages without being blocked by
-    // slow or hung windows elsewhere on the desktop.
+    // Out-of-context WinEvent hooks report top-level create/show transitions
+    // from every process on this desktop. Keep this thread dedicated to
+    // pumping hook messages; never block it with an EnumWindows census.
     HWINEVENTHOOK event_hook=SetWinEventHook(
         EVENT_OBJECT_CREATE,EVENT_OBJECT_SHOW,nullptr,
         desktop_steam_dialog_win_event_callback,0,0,WINEVENT_OUTOFCONTEXT);
     fprintf(log_file,
-        "{\"event\":\"steam_dialog_win_event_hook_state\",\"installed\":%s,\"error\":%lu}\n",
+        "{\\"event\\":\\"desktop_window_event_hook_state\\",\\"installed\\":%s,\\"error\\":%lu}\\n",
         event_hook?"true":"false",event_hook?ERROR_SUCCESS:GetLastError());
     fflush(log_file);
     while(InterlockedCompareExchange(&desktop_steam_window_watch_running,0,0)){
@@ -567,12 +598,15 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
         const ULONGLONG now=GetTickCount64();
         if(now-last_pulse>=1000){
             fprintf(log_file,
-                "{\"event\":\"steam_error_window_watch_pulse\",\"elapsed_ms\":%llu,"
-                "\"win_event_hook_installed\":%s,\"callbacks\":%ld,\"candidate_windows\":%ld,"
-                "\"standard_dialogs\":%ld,\"error_windows\":%ld,\"steam_text_matches\":%ld}\n",
+                "{\\"event\\":\\"desktop_window_watch_pulse\\",\\"elapsed_ms\\":%llu,"
+                "\\"win_event_hook_installed\\":%s,\\"callbacks\\":%ld,\\"captured_windows\\":%ld,"
+                "\\"visible_windows\\":%ld,\\"browser_process_windows\\":%ld,"
+                "\\"standard_dialogs\\":%ld,\\"error_windows\\":%ld,\\"steam_text_matches\\":%ld}\\n",
                 static_cast<unsigned long long>(now-watch_started),event_hook?"true":"false",
                 InterlockedCompareExchange(&desktop_win_event_callback_count,0,0),
                 InterlockedCompareExchange(&desktop_win_event_candidate_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_visible_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_browser_count,0,0),
                 InterlockedCompareExchange(&desktop_win_event_dialog_count,0,0),
                 InterlockedCompareExchange(&desktop_win_event_error_count,0,0),
                 InterlockedCompareExchange(&desktop_win_event_steam_count,0,0));
@@ -583,7 +617,7 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
     }
     if(event_hook){
         const BOOL unhooked=UnhookWinEvent(event_hook);
-        fprintf(log_file,"{\"event\":\"steam_dialog_win_event_hook_stopped\",\"success\":%s}\n",
+        fprintf(log_file,"{\\"event\\":\\"desktop_window_event_hook_stopped\\",\\"success\\":%s}\\n",
             unhooked?"true":"false");
         fflush(log_file);
     }
