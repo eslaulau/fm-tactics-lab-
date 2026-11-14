@@ -18,6 +18,7 @@
 #include <tlhelp32.h>
 #include <map>
 #include <array>
+#include <cwctype>
 #include <cstdarg>
 #include <system_error>
 static std::recursive_mutex worker_log_lock;
@@ -318,6 +319,94 @@ static std::string desktop_json_string(const std::wstring& value){
     }
     escaped.push_back('"');
     return escaped;
+}
+
+
+struct desktop_window_text_collector {
+    std::wstring text;
+};
+static std::wstring desktop_read_window_text(HWND window){
+    wchar_t buffer[2048]={};
+    int length=GetWindowTextW(window,buffer,static_cast<int>(sizeof(buffer)/sizeof(buffer[0])));
+    if(length<=0){
+        DWORD_PTR copied=0;
+        if(SendMessageTimeoutW(window,WM_GETTEXT,
+            static_cast<WPARAM>(sizeof(buffer)/sizeof(buffer[0])),
+            reinterpret_cast<LPARAM>(buffer),
+            SMTO_ABORTIFHUNG|SMTO_BLOCK,250,&copied))
+            length=static_cast<int>(std::min<DWORD_PTR>(copied,sizeof(buffer)/sizeof(buffer[0])-1));
+    }
+    return length>0?std::wstring(buffer,static_cast<size_t>(length)):std::wstring();
+}
+static std::wstring desktop_window_class(HWND window){
+    wchar_t name[256]={};
+    int length=GetClassNameW(window,name,static_cast<int>(sizeof(name)/sizeof(name[0])));
+    return length>0?std::wstring(name,static_cast<size_t>(length)):std::wstring();
+}
+static BOOL CALLBACK desktop_collect_child_window_text(HWND window,LPARAM parameter){
+    auto* collector=reinterpret_cast<desktop_window_text_collector*>(parameter);
+    if(!collector)return TRUE;
+    const auto value=desktop_read_window_text(window);
+    if(value.empty())return TRUE;
+    if(!collector->text.empty())collector->text+=L" | ";
+    collector->text+=desktop_window_class(window);
+    collector->text+=L"=";
+    collector->text+=value;
+    return TRUE;
+}
+static bool desktop_contains_steam_api(std::wstring value){
+    std::transform(value.begin(),value.end(),value.begin(),
+        [](wchar_t character){return static_cast<wchar_t>(std::towlower(character));});
+    return value.find(L"steamapi")!=std::wstring::npos||
+           value.find(L"steam api")!=std::wstring::npos;
+}
+struct desktop_steam_window_scan {
+    const char* phase=nullptr;
+    unsigned matches=0;
+};
+static std::vector<HWND> desktop_seen_steam_error_windows;
+static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM parameter){
+    auto* scan=reinterpret_cast<desktop_steam_window_scan*>(parameter);
+    if(!scan)return TRUE;
+    const auto title=desktop_read_window_text(window);
+    desktop_window_text_collector children={};
+    EnumChildWindows(window,desktop_collect_child_window_text,reinterpret_cast<LPARAM>(&children));
+    if(!desktop_contains_steam_api(title)&&!desktop_contains_steam_api(children.text))return TRUE;
+    scan->matches++;
+    if(std::find(desktop_seen_steam_error_windows.begin(),
+                 desktop_seen_steam_error_windows.end(),window)!=desktop_seen_steam_error_windows.end())
+        return TRUE;
+    DWORD process_id=0;
+    const DWORD thread_id=GetWindowThreadProcessId(window,&process_id);
+    wchar_t process_path[32768]={};
+    HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,process_id);
+    if(process){
+        DWORD length=static_cast<DWORD>(sizeof(process_path)/sizeof(process_path[0]));
+        QueryFullProcessImageNameW(process,0,process_path,&length);
+        CloseHandle(process);
+    }
+    const auto class_name=desktop_window_class(window);
+    const auto title_json=desktop_json_string(title);
+    const auto class_json=desktop_json_string(class_name);
+    const auto children_json=desktop_json_string(children.text);
+    const auto process_json=desktop_json_string(process_path[0]?std::wstring(process_path):std::wstring());
+    fprintf(log_file,
+        "{\"event\":\"steam_error_window_observed\",\"phase\":\"%s\",\"pid\":%lu,\"thread_id\":%lu,"
+        "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,\"process_path\":%s}\n",
+        scan->phase?scan->phase:"unknown",process_id,thread_id,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
+        IsWindowVisible(window)?"true":"false",class_json.c_str(),title_json.c_str(),
+        children_json.c_str(),process_json.c_str());
+    desktop_seen_steam_error_windows.push_back(window);
+    return TRUE;
+}
+static void desktop_scan_steamapi_windows(const char* phase){
+    if(!log_file)return;
+    desktop_steam_window_scan scan={phase,0};
+    EnumWindows(desktop_find_steam_error_window,reinterpret_cast<LPARAM>(&scan));
+    fprintf(log_file,"{\"event\":\"steam_error_window_scan_completed\",\"phase\":\"%s\",\"matches\":%u}\n",
+        phase?phase:"unknown",scan.matches);
+    fflush(log_file);
 }
 
 static void desktop_log_platform_module_state(const char* phase){
@@ -1727,6 +1816,7 @@ static int child(bool run_match){
     if(!module)return 81;
     native_base=(unsigned char*)module;
     desktop_log_thread_snapshot("after_windows_load");
+    desktop_scan_steamapi_windows("after_windows_load");
     if(!desktop_verify_platform_stubs())return 96;
     if(!desktop_verify_platform_stub_iat())return 97;
     if(!desktop_verify_platform_probe_modules())return 98;
@@ -1753,6 +1843,7 @@ static int child(bool run_match){
         }
         if(i%10==0){
             desktop_log_thread_snapshot("activation_gate_sample");
+            desktop_scan_steamapi_windows("activation_gate_sample");
             fprintf(log_file,"{\"event\":\"native_activation_gate_sample\",\"elapsed_ms\":%llu,\"word\":%u}\n",
                 static_cast<unsigned long long>(GetTickCount64()-activation_wait_started),*flag);fflush(log_file);
         }
@@ -1760,7 +1851,8 @@ static int child(bool run_match){
     }
     fprintf(log_file,"{\"event\":\"activation_still_pending\",\"word\":%u,\"elapsed_ms\":%llu,\"single_step_exceptions\":%ld,\"cpp_exceptions\":%ld,\"other_exceptions\":%ld}\n",
         *flag,static_cast<unsigned long long>(GetTickCount64()-activation_wait_started),
-        desktop_single_step_exception_count,desktop_cpp_exception_count,desktop_other_exception_count);fflush(log_file);return 82;
+        desktop_single_step_exception_count,desktop_cpp_exception_count,desktop_other_exception_count);fflush(log_file);
+    desktop_scan_steamapi_windows("activation_timeout");return 82;
 }
 int wmain(int argc,wchar_t** argv){
     // Fail-closed Steam/EOS isolation is the only supported runtime mode.
