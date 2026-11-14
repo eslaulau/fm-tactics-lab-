@@ -115,6 +115,12 @@ jobs:
             Write-Host ($variant.Name + ".dll exports verified: " + $names.Count)
           }
 
+      - name: Verify PE exports against the pinned engine import manifest
+        shell: pwsh
+        run: |
+          python scripts/verify_platform_stub_exports.py build/platform-stubs/PartyWin.dll build/platform-stubs/PlayFabMultiplayerWin.dll
+          if ($LASTEXITCODE -ne 0) { throw "Compiled platform stub PE verification failed" }
+
       - name: Upload compiled stub binaries for inspection
         uses: actions/upload-artifact@v4
         with:
