@@ -22,6 +22,8 @@ class ReleaseTests(unittest.TestCase):
     def test_public_profile_contains_only_fingerprints(self):
         profile = json.loads((ROOT / 'native/profile_metadata.json').read_text(encoding='utf8'))
         self.assertTrue(profile['ranges'])
+        self.assertEqual(profile['activation_flag_rva'], 0x1718f818)
+        self.assertEqual(profile['activation_flag_rva'] % 4, 0)
         for item in profile['ranges']:
             self.assertNotIn('hex', item)
             self.assertGreater(item['size'], 0)
