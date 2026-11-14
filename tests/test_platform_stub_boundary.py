@@ -4,6 +4,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'native' / 'platform_dependency_stub.cpp'
+HOST = ROOT / 'native' / 'desktop_host.cpp'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -77,6 +78,26 @@ class PlatformStubBoundaryTests(unittest.TestCase):
         handler = self.source.split('PlatformDependencyUnexpectedCall(void)', 1)[1]
         handler = handler.split('extern "C" BOOL WINAPI DllMain', 1)[0]
         self.assertNotRegex(handler, r'\breturn\s+')
+
+
+class PlatformStubHostTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.host = HOST.read_text(encoding='utf-8')
+
+    def test_import_address_table_is_verified_against_stub_module(self):
+        self.assertIn('desktop_verify_platform_stub_iat()', self.host)
+        self.assertIn('VirtualQuery(address,&memory,sizeof(memory))', self.host)
+        self.assertIn('memory.AllocationBase!=expected', self.host)
+        self.assertIn('expected_count=target==0?20:19', self.host)
+        self.assertIn('observed[0]!=20||observed[1]!=19', self.host)
+
+    def test_native_initializer_is_preserved_and_labelled_neutrally(self):
+        self.assertIn('at(0x9fa910))(3)', self.host)
+        self.assertIn('native_initializer_gate_result', self.host)
+        self.assertIn('before_native_initializer', self.host)
+        self.assertIn('after_native_initializer', self.host)
+        self.assertNotIn('native_platform_initialized', self.host)
 
 
 if __name__ == '__main__':
