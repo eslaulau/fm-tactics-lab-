@@ -94,6 +94,7 @@ class NativeAdapterRegistryTests(unittest.TestCase):
         _, spec, metadata, version = adapter_spec(STEAM_ID)
         self.assertEqual(spec['reference_sha256'], STEAM_SHA)
         self.assertEqual(metadata['reference_sha256'], STEAM_SHA)
+        self.assertEqual(metadata['activation_flag_rva'], 0x1718f818)
         self.assertEqual(version['reference_dll_sha256'], STEAM_SHA)
 
 
