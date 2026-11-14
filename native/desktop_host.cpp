@@ -167,6 +167,89 @@ static bool desktop_verify_platform_stubs(){
     return true;
 }
 
+static bool desktop_ascii_equal_ci(const char* left,const char* right){
+    if(!left||!right)return false;
+    while(*left&&*right){
+        unsigned char a=static_cast<unsigned char>(*left++),b=static_cast<unsigned char>(*right++);
+        if(a>='A'&&a<='Z')a=static_cast<unsigned char>(a-'A'+'a');
+        if(b>='A'&&b<='Z')b=static_cast<unsigned char>(b-'A'+'a');
+        if(a!=b)return false;
+    }
+    return *left==0&&*right==0;
+}
+
+static const char* desktop_image_rva_string(const unsigned char* image,size_t image_size,uint32_t rva){
+    if(rva>=image_size)return nullptr;
+    size_t limit=std::min<size_t>(image_size-rva,260);
+    for(size_t i=0;i<limit;i++)if(image[rva+i]==0)return reinterpret_cast<const char*>(image+rva);
+    return nullptr;
+}
+
+static bool desktop_verify_platform_stub_iat(){
+    auto image=reinterpret_cast<unsigned char*>(native_base);
+    auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(image);
+    if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0)return false;
+    auto nt_offset=static_cast<size_t>(dos->e_lfanew);
+    if(nt_offset>0x100000||nt_offset>SIZE_MAX-sizeof(IMAGE_NT_HEADERS64))return false;
+    auto nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(image+nt_offset);
+    if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->FileHeader.Machine!=IMAGE_FILE_MACHINE_AMD64||
+       nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC)return false;
+    const size_t image_size=nt->OptionalHeader.SizeOfImage;
+    if(nt_offset+sizeof(IMAGE_NT_HEADERS64)>image_size)return false;
+    const auto directory=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if(!directory.VirtualAddress||directory.Size<sizeof(IMAGE_IMPORT_DESCRIPTOR)||
+       directory.VirtualAddress>=image_size||directory.Size>image_size-directory.VirtualAddress)return false;
+    const auto descriptors=reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(image+directory.VirtualAddress);
+    const size_t descriptor_count=std::min<size_t>(directory.Size/sizeof(IMAGE_IMPORT_DESCRIPTOR),4096);
+    size_t observed[2]={0,0};
+    bool ended=false;
+    for(size_t d=0;d<descriptor_count;d++){
+        const auto& descriptor=descriptors[d];
+        if(!descriptor.Name&&!descriptor.FirstThunk){ended=true;break;}
+        const char* imported=desktop_image_rva_string(image,image_size,descriptor.Name);
+        if(!imported)return false;
+        int target=-1;
+        if(desktop_ascii_equal_ci(imported,"PartyWin.dll"))target=0;
+        else if(desktop_ascii_equal_ci(imported,"PlayFabMultiplayerWin.dll"))target=1;
+        if(target<0)continue;
+        auto expected=GetModuleHandleW(desktop_platform_stub_names[target]);
+        if(!expected||!descriptor.FirstThunk)return false;
+        const uint32_t lookup_rva=descriptor.OriginalFirstThunk?descriptor.OriginalFirstThunk:descriptor.FirstThunk;
+        if(lookup_rva>=image_size||descriptor.FirstThunk>=image_size)return false;
+        const size_t max_lookup=(image_size-lookup_rva)/sizeof(IMAGE_THUNK_DATA64);
+        const size_t max_iat=(image_size-descriptor.FirstThunk)/sizeof(IMAGE_THUNK_DATA64);
+        const size_t max_thunks=std::min<size_t>(std::min(max_lookup,max_iat),4096);
+        const auto lookup=reinterpret_cast<const IMAGE_THUNK_DATA64*>(image+lookup_rva);
+        const auto iat=reinterpret_cast<const IMAGE_THUNK_DATA64*>(image+descriptor.FirstThunk);
+        size_t count=0;
+        for(;count<max_thunks;count++){
+            if(!lookup[count].u1.AddressOfData)break;
+            auto address=reinterpret_cast<const void*>(static_cast<uintptr_t>(iat[count].u1.Function));
+            MEMORY_BASIC_INFORMATION memory={};
+            if(!address||!VirtualQuery(address,&memory,sizeof(memory))||memory.AllocationBase!=expected){
+                fprintf(log_file,"{\"event\":\"platform_stub_iat_target_mismatch\",\"module\":\"%s\",\"index\":%zu}\n",
+                        target==0?"PartyWin.dll":"PlayFabMultiplayerWin.dll",count);fflush(log_file);
+                return false;
+            }
+        }
+        const size_t expected_count=target==0?20:19;
+        if(count!=expected_count){
+            fprintf(log_file,"{\"event\":\"platform_stub_iat_count_mismatch\",\"module\":\"%s\",\"expected\":%zu,\"actual\":%zu}\n",
+                    target==0?"PartyWin.dll":"PlayFabMultiplayerWin.dll",expected_count,count);fflush(log_file);
+            return false;
+        }
+        observed[target]=count;
+        fprintf(log_file,"{\"event\":\"platform_stub_iat_verified\",\"module\":\"%s\",\"imports\":%zu}\n",
+                target==0?"PartyWin.dll":"PlayFabMultiplayerWin.dll",count);fflush(log_file);
+    }
+    if(!ended||observed[0]!=20||observed[1]!=19){
+        fprintf(log_file,"{\"event\":\"platform_stub_iat_incomplete\",\"partywin\":%zu,\"playfab\":%zu,\"descriptor_terminator\":%s}\n",
+                observed[0],observed[1],ended?"true":"false");fflush(log_file);
+        return false;
+    }
+    return true;
+}
+
 static std::string desktop_json_string(const std::wstring& value){
     if(value.empty())return "\"\"";
     int length=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
@@ -1155,6 +1238,7 @@ static int child(bool run_match){
     if(!module)return 81;
     native_base=(unsigned char*)module;
     if(!desktop_verify_platform_stubs())return 96;
+    if(!desktop_verify_platform_stub_iat())return 97;
     timing_loaded=GetTickCount64();
     bool game_runtime_absent=!GetModuleHandleW(L"fm.exe")&&!GetModuleHandleW(L"UnityPlayer.dll")&&!GetModuleHandleW(L"GameAssembly.dll");
     fprintf(log_file,"{\"event\":\"runtime_dependencies_checked\",\"fm_exe_unity_player_game_assembly_absent\":%s}\n",game_runtime_absent?"true":"false");fflush(log_file);
