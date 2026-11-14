@@ -18,11 +18,43 @@
 #include <tlhelp32.h>
 #include <map>
 #include <array>
+#include <cstdarg>
 #include <system_error>
 static std::recursive_mutex worker_log_lock;
 #include "fm27_tactic_bindings.h"
 #include "platform_stub_iat_verifier.h"
+
 #pragma comment(lib,"bcrypt.lib")
+
+// Serialize every host log write with exception-context records. The vectored
+// exception observer emits one JSON object through several stdio calls; without
+// the same lock on ordinary host writes, concurrent events can splice into that
+// object and corrupt the session JSONL.
+static int fm27_locked_fprintf(FILE* stream,const char* format,...){
+    std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+    va_list args;
+    va_start(args,format);
+    const int result=::vfprintf(stream,format,args);
+    va_end(args);
+    return result;
+}
+static int fm27_locked_fputs(const char* value,FILE* stream){
+    std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+    return ::fputs(value,stream);
+}
+static int fm27_locked_fputc(int value,FILE* stream){
+    std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+    return ::fputc(value,stream);
+}
+static int fm27_locked_fflush(FILE* stream){
+    std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+    return ::fflush(stream);
+}
+#define fprintf fm27_locked_fprintf
+#define fputs fm27_locked_fputs
+#define fputc fm27_locked_fputc
+#define fflush fm27_locked_fflush
+
 
 // Headless native match host. This intentionally retains the complete, unchanged
 // licensed native library; it is NOT a physically reduced engine binary.
