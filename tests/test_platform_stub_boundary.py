@@ -179,6 +179,16 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('RtlLookupFunctionEntry', self.host)
         self.assertIn('RtlVirtualUnwind', self.host)
 
+    def test_activation_scan_is_read_only_and_targets_protected_section(self):
+        self.assertIn('arg==L"--find-activation"', self.host)
+        self.assertIn('if(desktop_find_activation)return scan_activation', self.host)
+        scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
+        self.assertIn('memcmp(sections[i].Name,".00cfg",6)', scanner)
+        self.assertIn('ReadProcessMemory(GetCurrentProcess()', scanner)
+        self.assertIn('memory_modified\\":false', scanner)
+        self.assertNotIn('WriteProcessMemory', scanner)
+        self.assertNotIn('VirtualProtect', scanner)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
