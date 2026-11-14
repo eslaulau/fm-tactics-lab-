@@ -179,13 +179,17 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('RtlLookupFunctionEntry', self.host)
         self.assertIn('RtlVirtualUnwind', self.host)
 
-    def test_activation_scan_is_read_only_and_targets_protected_section(self):
+    def test_activation_scan_is_read_only_and_targets_the_section_containing_the_gate(self):
         self.assertIn('arg==L"--find-activation"', self.host)
         self.assertIn('if(desktop_find_activation)return scan_activation', self.host)
         scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
-        self.assertIn('memcmp(sections[i].Name,".00cfg",6)', scanner)
+        self.assertIn('configured_gate_rva=0x1718f818', scanner)
+        self.assertIn('configured_gate_rva>=section.VirtualAddress', scanner)
+        self.assertIn('gate_section=&section', scanner)
+        self.assertIn('scan_radius=0x100000', scanner)
         self.assertIn('ReadProcessMemory(GetCurrentProcess()', scanner)
         self.assertIn('memory_modified\\":false', scanner)
+        self.assertNotIn('.00cfg', scanner)
         self.assertNotIn('WriteProcessMemory', scanner)
         self.assertNotIn('VirtualProtect', scanner)
 
