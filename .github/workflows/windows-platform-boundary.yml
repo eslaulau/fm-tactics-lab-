@@ -159,6 +159,18 @@ jobs:
           & $smokeExe (Join-Path $build "PartyWin.dll") (Join-Path $build "PlayFabMultiplayerWin.dll") $fixtureDll
           if ($LASTEXITCODE -ne 0) { throw "Windows did not bind all synthetic imports to the preloaded stub modules" }
 
+
+      - name: Upload exact native host source files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fm27-activation-scan-source
+          path: |
+            native/desktop_host.cpp
+            tests/test_platform_stub_boundary.py
+            .github/workflows/windows-platform-boundary.yml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify PE exports against the pinned engine import manifest
         shell: pwsh
         run: |
