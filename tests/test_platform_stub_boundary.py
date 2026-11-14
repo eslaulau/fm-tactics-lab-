@@ -193,6 +193,18 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertNotIn('WriteProcessMemory', scanner)
         self.assertNotIn('VirtualProtect', scanner)
 
+    def test_activation_scan_monitors_every_word_and_prioritizes_relevant_changes(self):
+        scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
+        self.assertIn('word_count=window_size/sizeof(uint32_t)', scanner)
+        self.assertIn('words.reserve(word_count)', scanner)
+        self.assertIn('candidate.first!=candidate.disk_value', scanner)
+        self.assertIn('candidate.changes||candidate.first!=candidate.disk_value', scanner)
+        self.assertIn('std::sort(report.begin(),report.end()', scanner)
+        self.assertIn('distance_to_gate', scanner)
+        self.assertIn('disk_value', scanner)
+        self.assertIn('loaded_image_differences', scanner)
+        self.assertNotIn('if(value==1)candidates.push_back', scanner)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
