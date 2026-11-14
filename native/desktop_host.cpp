@@ -1176,14 +1176,35 @@ static void desktop_log_exception_context(EXCEPTION_POINTERS* p,const char* kind
     if(context_module)GetModuleFileNameW(context_module,context_path,MAX_PATH);
     const wchar_t* address_name=wcsrchr(address_path,L'\\');address_name=address_name?address_name+1:address_path;
     const wchar_t* context_name=wcsrchr(context_path,L'\\');context_name=context_name?context_name+1:context_path;
-    void* frames[8]={};
-    USHORT frame_count=CaptureStackBackTrace(2,8,frames,nullptr);
-    fprintf(log_file,"{\"event\":\"exception_context\",\"kind\":\"%s\",\"occurrence\":%ld,\"thread_id\":%lu,\"exception_module\":\"%ls\",\"exception_rva\":\"0x%llx\",\"context_module\":\"%ls\",\"context_rva\":\"0x%llx\",\"stack\":[",
+    fprintf(log_file,"{\"event\":\"exception_context\",\"kind\":\"%s\",\"occurrence\":%ld,\"thread_id\":%lu,\"exception_module\":\"%ls\",\"exception_rva\":\"0x%llx\",\"context_module\":\"%ls\",\"context_rva\":\"0x%llx\",\"frames\":[",
         kind,occurrence,GetCurrentThreadId(),address_name,
         address_module?static_cast<unsigned long long>(address-reinterpret_cast<uintptr_t>(address_module)):static_cast<unsigned long long>(address),
         context_name,
         context_module?static_cast<unsigned long long>(context_address-reinterpret_cast<uintptr_t>(context_module)):static_cast<unsigned long long>(context_address));
-    for(USHORT i=0;i<frame_count;i++)fprintf(log_file,"%s\"0x%llx\"",i?",":"",static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(frames[i])));
+    CONTEXT walk={};
+    if(p->ContextRecord)walk=*p->ContextRecord;
+    for(unsigned depth=0;depth<12&&walk.Rip;depth++){
+        if(depth)fputc(',',log_file);
+        HMODULE frame_module=nullptr;
+        wchar_t frame_path[MAX_PATH]={};
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(walk.Rip),&frame_module);
+        if(frame_module)GetModuleFileNameW(frame_module,frame_path,MAX_PATH);
+        const wchar_t* frame_name=wcsrchr(frame_path,L'\\');frame_name=frame_name?frame_name+1:frame_path;
+        fprintf(log_file,"{\"pc\":\"0x%llx\",\"module\":\"%ls\",\"rva\":\"0x%llx\"}",
+            static_cast<unsigned long long>(walk.Rip),frame_name,
+            frame_module?static_cast<unsigned long long>(walk.Rip-reinterpret_cast<uintptr_t>(frame_module)):static_cast<unsigned long long>(walk.Rip));
+        DWORD64 image_base=0;
+        auto entry=RtlLookupFunctionEntry(walk.Rip,&image_base,nullptr);
+        if(entry){
+            void* handler=nullptr;DWORD64 frame=0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER,image_base,walk.Rip,entry,&walk,&handler,&frame,nullptr);
+        }else{
+            MEMORY_BASIC_INFORMATION memory={};
+            VirtualQuery(reinterpret_cast<void*>(walk.Rsp),&memory,sizeof(memory));
+            if(memory.State!=MEM_COMMIT||(memory.Protect&(PAGE_NOACCESS|PAGE_GUARD)))break;
+            walk.Rip=*reinterpret_cast<DWORD64*>(walk.Rsp);walk.Rsp+=sizeof(DWORD64);
+        }
+    }
     fputs("]}\n",log_file);fflush(log_file);
 }
 static volatile LONG desktop_single_step_exception_count=0;
