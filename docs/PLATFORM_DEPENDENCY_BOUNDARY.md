@@ -60,10 +60,13 @@ exit code.
 
 The Windows CI compiles the native host source against a temporary compile-only
 compatibility header; the header contains placeholder bytes and is never used
-for runtime or packaged output. The same CI compiles both x64 stub DLLs and
-runs `scripts/verify_platform_stub_exports.py` against the resulting PE files.
-That verifier compares the actual export-name sets against the pinned original
-engine import manifest, checks that all named exports share one fail-fast code
+for runtime or packaged output. The same CI compiles both x64 stub DLLs and builds a synthetic importer that
+contains the same 39 PartyWin/PlayFab import names. It preloads the two stubs,
+loads that importer, and checks all 39 resolved function addresses with
+`VirtualQuery`; none of the platform functions are called. CI also runs
+`scripts/verify_platform_stub_exports.py` against the resulting PE files. The
+verifier compares actual export-name sets against the pinned original engine
+import manifest, checks that all named exports share one fail-fast code
 target, and confirms that the only imported runtime module is KERNEL32.dll.
 
 The Python resolver tests cover known directory layouts, split dependencies,
