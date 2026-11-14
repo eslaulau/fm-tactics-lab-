@@ -1165,9 +1165,43 @@ static void debug_text(EXCEPTION_RECORD* p){
     }
     fprintf(log_file,"\"}\n");fflush(log_file);
 }
+static void desktop_log_exception_context(EXCEPTION_POINTERS* p,const char* kind,LONG occurrence){
+    auto address=reinterpret_cast<uintptr_t>(p->ExceptionRecord->ExceptionAddress);
+    auto context_address=p->ContextRecord?p->ContextRecord->Rip:0;
+    HMODULE address_module=nullptr,context_module=nullptr;
+    wchar_t address_path[MAX_PATH]={},context_path[MAX_PATH]={};
+    if(address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(address),&address_module);
+    if(context_address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(context_address),&context_module);
+    if(address_module)GetModuleFileNameW(address_module,address_path,MAX_PATH);
+    if(context_module)GetModuleFileNameW(context_module,context_path,MAX_PATH);
+    const wchar_t* address_name=wcsrchr(address_path,L'\\');address_name=address_name?address_name+1:address_path;
+    const wchar_t* context_name=wcsrchr(context_path,L'\\');context_name=context_name?context_name+1:context_path;
+    void* frames[8]={};
+    USHORT frame_count=CaptureStackBackTrace(2,8,frames,nullptr);
+    fprintf(log_file,"{\"event\":\"exception_context\",\"kind\":\"%s\",\"occurrence\":%ld,\"thread_id\":%lu,\"exception_module\":\"%ls\",\"exception_rva\":\"0x%llx\",\"context_module\":\"%ls\",\"context_rva\":\"0x%llx\",\"stack\":[",
+        kind,occurrence,GetCurrentThreadId(),address_name,
+        address_module?static_cast<unsigned long long>(address-reinterpret_cast<uintptr_t>(address_module)):static_cast<unsigned long long>(address),
+        context_name,
+        context_module?static_cast<unsigned long long>(context_address-reinterpret_cast<uintptr_t>(context_module)):static_cast<unsigned long long>(context_address));
+    for(USHORT i=0;i<frame_count;i++)fprintf(log_file,"%s\"0x%llx\"",i?",":"",static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(frames[i])));
+    fputs("]}\n",log_file);fflush(log_file);
+}
+static volatile LONG desktop_single_step_exception_count=0;
+static volatile LONG desktop_cpp_exception_count=0;
+static volatile LONG desktop_other_exception_count=0;
 static LONG WINAPI observe(EXCEPTION_POINTERS* p){
     std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
-    fprintf(log_file,"{\"event\":\"exception\",\"code\":\"0x%lx\",\"address\":\"0x%llx\"}\n",p->ExceptionRecord->ExceptionCode,(unsigned long long)p->ExceptionRecord->ExceptionAddress);fflush(log_file);
+    const auto code=p->ExceptionRecord->ExceptionCode;
+    fprintf(log_file,"{\"event\":\"exception\",\"code\":\"0x%lx\",\"address\":\"0x%llx\"}\n",code,(unsigned long long)p->ExceptionRecord->ExceptionAddress);fflush(log_file);
+    if(code==0x80000004){
+        LONG occurrence=InterlockedIncrement(&desktop_single_step_exception_count);
+        if(occurrence<=8)desktop_log_exception_context(p,"single_step",occurrence);
+    }else if(code==0xe06d7363){
+        LONG occurrence=InterlockedIncrement(&desktop_cpp_exception_count);
+        if(occurrence<=8)desktop_log_exception_context(p,"cpp_exception",occurrence);
+    }else{
+        InterlockedIncrement(&desktop_other_exception_count);
+    }
     debug_text(p->ExceptionRecord);
     if(p->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION){
         auto c=p->ContextRecord;HMODULE module=nullptr;wchar_t path[MAX_PATH]={};
@@ -1267,20 +1301,28 @@ static int child(bool run_match){
     if(!game_runtime_absent)return 100;
     if(policy_audit)return audit_policies();
     auto flag=(volatile unsigned int*)((unsigned char*)module+0x1718f818);
+    auto activation_wait_started=GetTickCount64();
+    fprintf(log_file,"{\"event\":\"native_activation_gate_initial\",\"rva\":\"0x1718f818\",\"word\":%u}\n",*flag);fflush(log_file);
     for(unsigned i=0;i<100;i++){
         if(*flag==0){
             desktop_check_cancel();
             timing_active=GetTickCount64();
-            fprintf(log_file,"{\"event\":\"native_activation_completed\"}\n");fflush(log_file);
+            fprintf(log_file,"{\"event\":\"native_activation_completed\",\"elapsed_ms\":%llu}\n",static_cast<unsigned long long>(GetTickCount64()-activation_wait_started));fflush(log_file);
             unsigned char object[0x48]={};
             auto result=((void*(*)(void*))((unsigned char*)module+0x4ba21d0))(object);
             fprintf(log_file,"{\"event\":\"native_interface_created\",\"self_returned\":%s,\"vtable_rva\":\"0x%llx\"}\n",result==object?"true":"false",*(unsigned long long*)object-(unsigned long long)module);fflush(log_file);
             if(run_match)return worker_manifest.empty()?native_match(object):worker_loop(object);
             return 0;
         }
+        if(i%10==0){
+            fprintf(log_file,"{\"event\":\"native_activation_gate_sample\",\"elapsed_ms\":%llu,\"word\":%u}\n",
+                static_cast<unsigned long long>(GetTickCount64()-activation_wait_started),*flag);fflush(log_file);
+        }
         Sleep(100);
     }
-    fprintf(log_file,"{\"event\":\"activation_still_pending\",\"word\":%u}\n",*flag);fflush(log_file);return 82;
+    fprintf(log_file,"{\"event\":\"activation_still_pending\",\"word\":%u,\"elapsed_ms\":%llu,\"single_step_exceptions\":%ld,\"cpp_exceptions\":%ld,\"other_exceptions\":%ld}\n",
+        *flag,static_cast<unsigned long long>(GetTickCount64()-activation_wait_started),
+        desktop_single_step_exception_count,desktop_cpp_exception_count,desktop_other_exception_count);fflush(log_file);return 82;
 }
 int wmain(int argc,wchar_t** argv){
     wchar_t probe_mode[16]={};
