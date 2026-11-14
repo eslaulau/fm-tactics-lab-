@@ -183,7 +183,8 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('arg==L"--find-activation"', self.host)
         self.assertIn('if(desktop_find_activation)return scan_activation', self.host)
         scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
-        self.assertIn('configured_gate_rva=0x1718f818', scanner)
+        self.assertIn('configured_gate_rva=compat_activation_flag', scanner)
+        self.assertIn('compat_activation_flag', (ROOT / 'native' / 'desktop_host.cpp').read_text(encoding='utf-8'))
         self.assertIn('configured_gate_rva>=section.VirtualAddress', scanner)
         self.assertIn('gate_section=&section', scanner)
         self.assertIn('scan_radius=0x100000', scanner)
