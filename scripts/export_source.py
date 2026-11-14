@@ -12,7 +12,7 @@ TOP = {'README.md', 'README.en.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CONTRI
 TYPES = {'src': {'.py', '.js', '.css', '.html'},
          'scripts': {'.py'}, 'tests': {'.py', '.cjs'}, 'docs': {'.md'},
          'native': {'.cpp', '.h', '.manifest'}}
-NATIVE_JSON = {'native/profile_metadata.json', 'native/adapter_version.json'}
+NATIVE_JSON = {'native/profile_metadata.json', 'native/adapter_version.json', 'native/adapter_registry.json'}
 SCREENSHOTS = {'docs/screenshots/tactics.png', 'docs/screenshots/players.png',
                'docs/screenshots/results.png', 'docs/screenshots/save-tactics.png',
                'docs/screenshots/save-tactics-progress.png', 'docs/screenshots/away-pool.png'}
@@ -54,6 +54,24 @@ def validate(root=ROOT):
     profile = json.loads((root / 'native/profile_metadata.json').read_text(encoding='utf8'))
     if any('hex' in row for row in profile['ranges']):
         raise ValueError('Original game function bytes must not be published')
+    registry = json.loads((root / 'native/adapter_registry.json').read_text(encoding='utf8'))
+    if registry.get('schema_version') != 1:
+        raise ValueError('Unsupported native adapter registry schema')
+    default = next((item for item in registry.get('adapters', [])
+                    if item.get('id') == registry.get('default_adapter')), None)
+    version = json.loads((root / 'native/adapter_version.json').read_text(encoding='utf8'))
+    if (default is None or not default.get('enabled') or
+            default.get('reference_sha256') != profile.get('reference_sha256') or
+            default.get('reference_sha256') != version.get('reference_dll_sha256')):
+        raise ValueError('Default adapter, compatibility profile and version metadata disagree')
+    for item in registry.get('adapters', []):
+        output = Path(item.get('output_directory', ''))
+        if output.is_absolute() or '..' in output.parts:
+            raise ValueError('Unsafe native adapter output directory: ' + str(item.get('id')))
+        if item.get('enabled') and (not item.get('profile_metadata') or
+                                    not item.get('version_metadata') or
+                                    not item.get('reference_sha256')):
+            raise ValueError('Enabled native adapter is missing its reference contract')
     return paths
 
 
