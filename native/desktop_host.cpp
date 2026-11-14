@@ -57,6 +57,7 @@ static const char* desktop_runtime_dll_names[] = {
 static const wchar_t* desktop_platform_stub_names[] = {
     L"PartyWin.dll", L"PlayFabMultiplayerWin.dll"
 };
+static bool desktop_load_platform_stub(const wchar_t* name);
 
 static void desktop_append_runtime_dir(std::vector<fs::path>& dirs, const fs::path& candidate){
     std::error_code error;
@@ -178,7 +179,7 @@ static std::string desktop_json_string(const std::wstring& value){
         else if(c=='\"')escaped+="\\\"";
         else if(c<0x20){
             char buffer[7]={};
-            sprintf_s(buffer,"\\u%04x",static_cast<unsigned>(c));
+            sprintf_s(buffer,sizeof(buffer),"\\u%04x",static_cast<unsigned>(c));
             escaped+=buffer;
         }else escaped.push_back(static_cast<char>(c));
     }
