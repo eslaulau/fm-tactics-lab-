@@ -39,10 +39,35 @@ writes an OutputDebugString diagnostic, and fail-fast terminates the process.
 The stubs never return a success code, token, account, ownership, entitlement,
 lobby, or network result.
 
-The genuine ICU, EOS SDK, and Steam runtime dependencies remain required and
-are resolved from the known game/bundle directories. In particular, EOS Auth,
-EOS Connect, EOS Ecom/ownership, Steam initialization, callbacks, and shutdown
-are not stubbed or given fabricated responses.
+In normal mode, the genuine ICU, EOS SDK, and Steam runtime dependencies remain
+required and are resolved from the known game/bundle directories. In
+particular, EOS Auth, EOS Connect, EOS Ecom/ownership, Steam initialization,
+callbacks, and shutdown are not given fabricated responses.
+
+## No-login diagnostic probe mode
+
+The build now also generates opt-in diagnostic replacements for the 11 Steam
+and 109 EOS imports from the pinned manifest. Unlike the PartyWin/PlayFab
+boundary, these probes are deliberately **not** enabled in normal runs.
+
+Set `FM27_PLATFORM_PROBE_MODE=1` for a direct native-host diagnostic, or launch
+the source runner with `--platform-probe-mode`. In this mode the host does not
+require or load the genuine Steam/EOS runtime DLLs, does not set Steam app-ID
+environment metadata, and skips the Steam shutdown hook. It preloads the
+API-identifying probes by absolute path and verifies every Steam/EOS IAT slot
+belongs to the expected probe module before continuing.
+
+Each imported API has a distinct fail-fast entry point. If the native engine
+calls one, the probe writes `platform_probe_unexpected_call` with the exact API
+name and a captured call stack (including an engine RVA when the frame lies
+inside `game_plugin.dll`), then terminates. It never returns an invented
+success result, token, login state, ownership or entitlement.
+
+This mode is an investigation tool, not yet a supported production runtime.
+A probe hit identifies an actual platform call that must be understood and
+isolated safely; a clean zero-tick fixture preparation only establishes that
+the engine reached that point without calling the probed APIs. It does not by
+itself prove that a complete match can run without platform services.
 
 ## Runtime diagnostics
 
@@ -70,8 +95,11 @@ import manifest, checks that all named exports share one fail-fast code
 target, and confirms that the only imported runtime module is KERNEL32.dll.
 
 The Python resolver tests cover known directory layouts, split dependencies,
-conflicting duplicate DLLs, and bundle-only stub selection. Source-level tests
-check the 39 exact manifest exports, fail-fast behavior, and the host IAT guard.
+conflicting duplicate DLLs, bundle-only stubs, and the optional no-login probe
+layout. Windows CI compiles and verifies the 11 Steam and 109 EOS named probe
+exports, including distinct trap targets and KERNEL32-only dependencies.
+Source-level tests check fail-fast behavior, the host IAT guards, and the
+no-login mode's environment and cleanup boundaries.
 A full native build using the actual local game_plugin.dll and a real local
 engine match are still required before this isolation can be considered
 validated. Until then, describe it as an experimental
