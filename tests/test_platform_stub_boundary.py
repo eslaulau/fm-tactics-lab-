@@ -314,5 +314,26 @@ class NativeDesktopModeTests(unittest.TestCase):
         self.assertIn('FM27_NATIVE_DESKTOP_MODE=args.desktop_mode', runner)
 
 
+
+class NativeThreadExitDiagnosticsTests(unittest.TestCase):
+    def test_host_captures_new_thread_start_addresses_and_exit_codes(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('#include <tlhelp32.h>', host)
+        self.assertIn('NtQueryInformationThread', host)
+        self.assertIn('native_thread_observed', host)
+        self.assertIn('native_thread_exited', host)
+        self.assertIn('thread_snapshot_completed', host)
+        self.assertIn('desktop_capture_thread_baseline();', host)
+        self.assertIn('desktop_log_thread_snapshot("after_windows_load")', host)
+        self.assertIn('desktop_log_thread_snapshot("activation_gate_sample")', host)
+        self.assertIn('engine_start', host)
+
+    def test_host_logs_unhandled_exception_register_context(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('SetUnhandledExceptionFilter(desktop_observe_unhandled_exception)', host)
+        self.assertIn('unhandled_exception', host)
+        self.assertIn('EXCEPTION_CONTINUE_SEARCH', host)
+
+
 if __name__ == '__main__':
     unittest.main()

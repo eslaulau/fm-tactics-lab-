@@ -15,6 +15,7 @@
 #include <string.h>
 #include <bcrypt.h>
 #include <mutex>
+#include <tlhelp32.h>
 #include <map>
 #include <array>
 #include <system_error>
@@ -45,6 +46,19 @@ static bool desktop_use_private_desktop=true;
 static std::vector<HMODULE> desktop_platform_probe_modules;
 static unsigned char* native_base;
 static uint64_t input_cursor=0,input_reads=0;
+struct desktop_thread_watch {
+    DWORD thread_id=0;
+    HANDLE handle=nullptr;
+    bool exit_logged=false;
+    bool start_queried=false;
+    uintptr_t start_address=0;
+    uintptr_t module_base=0;
+    std::string module_name;
+    uintptr_t module_rva=0;
+    LONG query_status=0;
+};
+static std::vector<DWORD> desktop_initial_thread_ids;
+static std::vector<desktop_thread_watch> desktop_thread_watches;
 #include "native_steam_lifecycle.h"
 static void* at(uintptr_t rva){
     if(rva>=0xf0000000){
@@ -1538,12 +1552,127 @@ static int scan_activation(HMODULE module,const fs::path& path){
     return 0;
 }
 
+
+static bool desktop_thread_was_present(DWORD thread_id){
+    return std::find(desktop_initial_thread_ids.begin(),desktop_initial_thread_ids.end(),thread_id)!=desktop_initial_thread_ids.end();
+}
+static desktop_thread_watch* desktop_find_thread_watch(DWORD thread_id){
+    for(auto& item:desktop_thread_watches)if(item.thread_id==thread_id)return &item;
+    return nullptr;
+}
+static bool desktop_query_thread_start(HANDLE thread,uintptr_t& start,LONG& status){
+    using NtQueryInformationThreadFn=LONG (NTAPI*)(HANDLE,ULONG,PVOID,ULONG,PULONG);
+    static auto ntdll=GetModuleHandleW(L"ntdll.dll");
+    static auto query=ntdll?reinterpret_cast<NtQueryInformationThreadFn>(GetProcAddress(ntdll,"NtQueryInformationThread")):nullptr;
+    if(!query){status=static_cast<LONG>(0xC0000139);return false;}
+    PVOID value=nullptr;ULONG returned=0;
+    status=query(thread,9,&value,sizeof(value),&returned);
+    if(status<0||!value)return false;
+    start=reinterpret_cast<uintptr_t>(value);
+    return true;
+}
+static void desktop_capture_thread_baseline(){
+    desktop_initial_thread_ids.clear();
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    if(snapshot==INVALID_HANDLE_VALUE){
+        fprintf(log_file,"{\"event\":\"thread_baseline_failed\",\"error\":%lu}\n",GetLastError());fflush(log_file);return;
+    }
+    THREADENTRY32 entry={};entry.dwSize=sizeof(entry);
+    if(Thread32First(snapshot,&entry)){
+        do{if(entry.th32OwnerProcessID==GetCurrentProcessId())desktop_initial_thread_ids.push_back(entry.th32ThreadID);}
+        while(Thread32Next(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    fprintf(log_file,"{\"event\":\"thread_baseline_captured\",\"count\":%zu,\"current_thread_id\":%lu}\n",
+        desktop_initial_thread_ids.size(),GetCurrentThreadId());fflush(log_file);
+}
+static void desktop_log_thread_snapshot(const char* phase){
+    if(!log_file)return;
+    std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    if(snapshot==INVALID_HANDLE_VALUE){
+        fprintf(log_file,"{\"event\":\"thread_snapshot_failed\",\"phase\":\"%s\",\"error\":%lu}\n",phase,GetLastError());fflush(log_file);return;
+    }
+    unsigned current_count=0,new_count=0;
+    THREADENTRY32 entry={};entry.dwSize=sizeof(entry);
+    if(Thread32First(snapshot,&entry)){
+        do{
+            if(entry.th32OwnerProcessID!=GetCurrentProcessId())continue;
+            current_count++;
+            if(desktop_thread_was_present(entry.th32ThreadID)||desktop_find_thread_watch(entry.th32ThreadID))continue;
+            desktop_thread_watch watch={};watch.thread_id=entry.th32ThreadID;
+            watch.handle=OpenThread(THREAD_QUERY_INFORMATION|SYNCHRONIZE,FALSE,entry.th32ThreadID);
+            if(watch.handle){
+                watch.start_queried=desktop_query_thread_start(watch.handle,watch.start_address,watch.query_status);
+                if(watch.start_queried){
+                    HMODULE owner=nullptr;wchar_t path[MAX_PATH]={};
+                    if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        reinterpret_cast<LPCWSTR>(watch.start_address),&owner)&&owner){
+                        GetModuleFileNameW(owner,path,MAX_PATH);
+                        const wchar_t* leaf=wcsrchr(path,L'\\');leaf=leaf?leaf+1:path;
+                        int needed=WideCharToMultiByte(CP_UTF8,0,leaf,-1,nullptr,0,nullptr,nullptr);
+                        if(needed>1){
+                            std::string utf8(static_cast<size_t>(needed),0);
+                            WideCharToMultiByte(CP_UTF8,0,leaf,-1,utf8.data(),needed,nullptr,nullptr);
+                            if(!utf8.empty()&&utf8.back()==0)utf8.pop_back();
+                            watch.module_name=utf8;
+                        }
+                        watch.module_base=reinterpret_cast<uintptr_t>(owner);
+                        watch.module_rva=watch.start_address-watch.module_base;
+                    }
+                }
+            }
+            DWORD exit_code=STILL_ACTIVE;
+            const bool queried_exit=watch.handle&&GetExitCodeThread(watch.handle,&exit_code);
+            fprintf(log_file,"{\"event\":\"native_thread_observed\",\"phase\":\"%s\",\"thread_id\":%lu,\"open_thread\":%s,\"start_queried\":%s,\"query_status\":%ld,\"start_address\":\"0x%llx\",\"module\":\"%s\",\"module_rva\":\"0x%llx\",\"engine_start\":%s,\"exit_query\":%s,\"exit_code\":%lu}\n",
+                phase,watch.thread_id,watch.handle?"true":"false",watch.start_queried?"true":"false",watch.query_status,
+                static_cast<unsigned long long>(watch.start_address),watch.module_name.c_str(),
+                static_cast<unsigned long long>(watch.module_rva),
+                native_base&&watch.start_address>=reinterpret_cast<uintptr_t>(native_base)&&watch.start_address<reinterpret_cast<uintptr_t>(native_base)+0x17cb9000?"true":"false",
+                queried_exit?"true":"false",queried_exit?exit_code:0UL);
+            fflush(log_file);
+            if(watch.handle)desktop_thread_watches.push_back(std::move(watch));
+            new_count++;
+        }while(Thread32Next(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    for(auto& watch:desktop_thread_watches){
+        if(!watch.handle||watch.exit_logged)continue;
+        DWORD exit_code=STILL_ACTIVE;
+        if(GetExitCodeThread(watch.handle,&exit_code)&&exit_code!=STILL_ACTIVE){
+            fprintf(log_file,"{\"event\":\"native_thread_exited\",\"phase\":\"%s\",\"thread_id\":%lu,\"exit_code\":%lu,\"start_address\":\"0x%llx\",\"module\":\"%s\",\"module_rva\":\"0x%llx\"}\n",
+                phase,watch.thread_id,exit_code,static_cast<unsigned long long>(watch.start_address),
+                watch.module_name.c_str(),static_cast<unsigned long long>(watch.module_rva));fflush(log_file);
+            watch.exit_logged=true;
+        }
+    }
+    fprintf(log_file,"{\"event\":\"thread_snapshot_completed\",\"phase\":\"%s\",\"current_threads\":%u,\"new_threads\":%u,\"tracked_threads\":%zu}\n",
+        phase,current_count,new_count,desktop_thread_watches.size());fflush(log_file);
+}
+static LONG WINAPI desktop_observe_unhandled_exception(EXCEPTION_POINTERS* p){
+    if(log_file&&p&&p->ExceptionRecord&&p->ContextRecord){
+        std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
+        auto c=p->ContextRecord;HMODULE module=nullptr;wchar_t path[MAX_PATH]={};
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(c->Rip),&module);
+        if(module)GetModuleFileNameW(module,path,MAX_PATH);
+        const wchar_t* leaf=wcsrchr(path,L'\\');leaf=leaf?leaf+1:path;
+        fprintf(log_file,"{\"event\":\"unhandled_exception\",\"code\":\"0x%lx\",\"address\":\"0x%llx\",\"thread_id\":%lu,\"module\":\"%ls\",\"rip\":\"0x%llx\",\"rcx\":\"0x%llx\",\"rdx\":\"0x%llx\",\"r8\":\"0x%llx\",\"r9\":\"0x%llx\"}\n",
+            p->ExceptionRecord->ExceptionCode,reinterpret_cast<unsigned long long>(p->ExceptionRecord->ExceptionAddress),
+            GetCurrentThreadId(),leaf,static_cast<unsigned long long>(c->Rip),
+            static_cast<unsigned long long>(c->Rcx),static_cast<unsigned long long>(c->Rdx),
+            static_cast<unsigned long long>(c->R8),static_cast<unsigned long long>(c->R9));fflush(log_file);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static int child(bool run_match){
     timing_start=GetTickCount64();
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
     log_file=_wfsopen(output.c_str(),L"w",_SH_DENYNO);
     if(!log_file)return 98;
     AddVectoredExceptionHandler(0,observe);
+    SetUnhandledExceptionFilter(desktop_observe_unhandled_exception);
     wchar_t desktop[256]={};DWORD needed=0;
     GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,desktop,sizeof(desktop),&needed);
     const bool is_private_desktop=wcsstr(desktop,L"FmEngineControl_")!=nullptr;
@@ -1559,11 +1688,13 @@ static int child(bool run_match){
         fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
     }
     if(!desktop_prepare_runtime_dll_search())return 81;
+    desktop_capture_thread_baseline();
     fprintf(log_file,"{\"event\":\"windows_load_started\"}\n");fflush(log_file);
     auto module=LoadLibraryExW(image,nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
     fprintf(log_file,"{\"event\":\"windows_load_returned\",\"success\":%s,\"error\":%lu}\n",module?"true":"false",GetLastError());fflush(log_file);
     if(!module)return 81;
     native_base=(unsigned char*)module;
+    desktop_log_thread_snapshot("after_windows_load");
     if(!desktop_verify_platform_stubs())return 96;
     if(!desktop_verify_platform_stub_iat())return 97;
     if(!desktop_verify_platform_probe_modules())return 98;
@@ -1589,6 +1720,7 @@ static int child(bool run_match){
             return 0;
         }
         if(i%10==0){
+            desktop_log_thread_snapshot("activation_gate_sample");
             fprintf(log_file,"{\"event\":\"native_activation_gate_sample\",\"elapsed_ms\":%llu,\"word\":%u}\n",
                 static_cast<unsigned long long>(GetTickCount64()-activation_wait_started),*flag);fflush(log_file);
         }
