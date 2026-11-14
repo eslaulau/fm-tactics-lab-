@@ -360,23 +360,57 @@ static bool desktop_contains_steam_api(std::wstring value){
     return value.find(L"steamapi")!=std::wstring::npos||
            value.find(L"steam api")!=std::wstring::npos;
 }
+static bool desktop_contains_error_marker(std::wstring value){
+    std::transform(value.begin(),value.end(),value.begin(),
+        [](wchar_t character){return static_cast<wchar_t>(std::towlower(character));});
+    return value.find(L"error")!=std::wstring::npos||
+           value.find(L"failed")!=std::wstring::npos||
+           value.find(L"failure")!=std::wstring::npos||
+           value.find(L"错误")!=std::wstring::npos||
+           value.find(L"失败")!=std::wstring::npos;
+}
 struct desktop_steam_window_scan {
     const char* phase=nullptr;
     unsigned matches=0;
+    unsigned top_level_windows=0;
+    unsigned visible_windows=0;
+    unsigned standard_dialogs=0;
+    unsigned visible_standard_dialogs=0;
+    unsigned error_title_windows=0;
+    unsigned steam_matches=0;
+    bool enum_success=true;
+    DWORD enum_error=0;
 };
 static std::map<HWND,ULONGLONG> desktop_steam_error_window_last_reported_ms;
 static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM parameter){
     auto* scan=reinterpret_cast<desktop_steam_window_scan*>(parameter);
     if(!scan)return TRUE;
+    scan->top_level_windows++;
+    const bool visible=IsWindowVisible(window)!=FALSE;
+    if(visible)scan->visible_windows++;
     const auto title=desktop_read_window_text(window);
     const auto class_name=desktop_window_class(window);
-    // Only inspect child controls on standard Windows dialogs or windows whose
-    // own title already identifies SteamAPI; avoid walking every desktop tree.
-    if(class_name!=L"#32770"&&!desktop_contains_steam_api(title))return TRUE;
+    const bool standard_dialog=class_name==L"#32770";
+    const bool steam_title=desktop_contains_steam_api(title);
+    const bool error_title=desktop_contains_error_marker(title);
+    if(standard_dialog){
+        scan->standard_dialogs++;
+        if(visible)scan->visible_standard_dialogs++;
+    }
+    if(error_title)scan->error_title_windows++;
+    // Keep the census focused: record visible standard dialogs and windows
+    // whose captions identify SteamAPI or an error. This deliberately includes
+    // Chinese captions such as "错误", even when WM_GETTEXT on child controls
+    // is blocked or the message text is not exposed cross-process.
+    if(!visible&&!steam_title&&!error_title)return TRUE;
+    if(!standard_dialog&&!steam_title&&!error_title)return TRUE;
     desktop_window_text_collector children={};
     EnumChildWindows(window,desktop_collect_child_window_text,reinterpret_cast<LPARAM>(&children));
-    if(!desktop_contains_steam_api(title)&&!desktop_contains_steam_api(children.text))return TRUE;
+    const bool steam_match=steam_title||desktop_contains_steam_api(children.text);
+    const bool error_match=error_title||desktop_contains_error_marker(children.text);
+    if(!standard_dialog&&!steam_match&&!error_match)return TRUE;
     scan->matches++;
+    if(steam_match)scan->steam_matches++;
     DWORD process_id=0;
     const DWORD thread_id=GetWindowThreadProcessId(window,&process_id);
     wchar_t process_path[32768]={};
@@ -391,9 +425,8 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
     const auto children_json=desktop_json_string(children.text);
     const auto process_json=desktop_json_string(process_path[0]?std::wstring(process_path):std::wstring());
     {
-        // The load-time watcher polls while modal dialogs are open. Throttle a
-        // still-visible HWND, but allow the same handle to be reported again
-        // after a short gap in case Windows reuses it for another dialog.
+        // Throttle repeated observations of the same visible HWND without
+        // suppressing newly-created or recycled dialog handles.
         std::lock_guard<std::recursive_mutex> lock(worker_log_lock);
         const ULONGLONG now=GetTickCount64();
         const auto previous=desktop_steam_error_window_last_reported_ms.find(window);
@@ -401,33 +434,66 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
            now-previous->second<250)return TRUE;
         desktop_steam_error_window_last_reported_ms[window]=now;
         fprintf(log_file,
-            "{\"event\":\"steam_error_window_observed\",\"phase\":\"%s\",\"pid\":%lu,\"thread_id\":%lu,"
-            "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,\"process_path\":%s}\n",
+            "{\"event\":\"%s\",\"phase\":\"%s\",\"pid\":%lu,\"thread_id\":%lu,"
+            "\"hwnd\":\"0x%llx\",\"visible\":%s,\"class\":%s,\"title\":%s,\"controls\":%s,"
+            "\"process_path\":%s,\"steam_api_text_match\":%s,\"error_marker_match\":%s}\n",
+            steam_match?"steam_error_window_observed":"steam_dialog_candidate_observed",
             scan->phase?scan->phase:"unknown",process_id,thread_id,
             static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window)),
-            IsWindowVisible(window)?"true":"false",class_json.c_str(),title_json.c_str(),
-            children_json.c_str(),process_json.c_str());
+            visible?"true":"false",class_json.c_str(),title_json.c_str(),
+            children_json.c_str(),process_json.c_str(),
+            steam_match?"true":"false",error_match?"true":"false");
     }
     return TRUE;
 }
-static void desktop_scan_steamapi_windows(const char* phase,bool log_summary=true){
+static void desktop_scan_steamapi_windows(const char* phase,bool log_summary=true,
+                                           desktop_steam_window_scan* stats_out=nullptr){
     if(!log_file)return;
-    desktop_steam_window_scan scan={phase,0};
-    EnumWindows(desktop_find_steam_error_window,reinterpret_cast<LPARAM>(&scan));
+    desktop_steam_window_scan scan={};
+    scan.phase=phase;
+    SetLastError(ERROR_SUCCESS);
+    scan.enum_success=EnumWindows(desktop_find_steam_error_window,reinterpret_cast<LPARAM>(&scan))!=FALSE;
+    scan.enum_error=scan.enum_success?ERROR_SUCCESS:GetLastError();
+    if(stats_out)*stats_out=scan;
     if(log_summary)
-        fprintf(log_file,"{\"event\":\"steam_error_window_scan_completed\",\"phase\":\"%s\",\"matches\":%u}\n",
-            phase?phase:"unknown",scan.matches);
+        fprintf(log_file,
+            "{\"event\":\"steam_error_window_scan_completed\",\"phase\":\"%s\",\"matches\":%u,"
+            "\"top_level_windows\":%u,\"visible_windows\":%u,\"standard_dialogs\":%u,"
+            "\"visible_standard_dialogs\":%u,\"error_title_windows\":%u,\"steam_matches\":%u,"
+            "\"enum_success\":%s,\"enum_error\":%lu}\n",
+            phase?phase:"unknown",scan.matches,scan.top_level_windows,scan.visible_windows,
+            scan.standard_dialogs,scan.visible_standard_dialogs,scan.error_title_windows,
+            scan.steam_matches,scan.enum_success?"true":"false",scan.enum_error);
     fflush(log_file);
 }
 
 static volatile LONG desktop_steam_window_watch_running=0;
 static HANDLE desktop_steam_window_watch_handle=nullptr;
 static DWORD WINAPI desktop_steam_window_watch_thread(void*){
+    const ULONGLONG watch_started=GetTickCount64();
+    ULONGLONG last_pulse=watch_started;
+    unsigned long long cycles=0;
     while(InterlockedCompareExchange(&desktop_steam_window_watch_running,0,0)){
         // LoadLibraryExW can be blocked by modal dialogs raised from DLL
         // initialization. Observe the shared desktop concurrently, not only
         // after LoadLibraryExW has returned.
-        desktop_scan_steamapi_windows("load_window_watch",false);
+        desktop_steam_window_scan scan={};
+        desktop_scan_steamapi_windows("load_window_watch",false,&scan);
+        cycles++;
+        const ULONGLONG now=GetTickCount64();
+        if(now-last_pulse>=1000){
+            fprintf(log_file,
+                "{\"event\":\"steam_error_window_watch_pulse\",\"elapsed_ms\":%llu,\"cycles\":%llu,"
+                "\"enum_success\":%s,\"enum_error\":%lu,\"top_level_windows\":%u,"
+                "\"visible_windows\":%u,\"standard_dialogs\":%u,\"visible_standard_dialogs\":%u,"
+                "\"error_title_windows\":%u,\"steam_matches\":%u}\n",
+                static_cast<unsigned long long>(now-watch_started),cycles,
+                scan.enum_success?"true":"false",scan.enum_error,scan.top_level_windows,
+                scan.visible_windows,scan.standard_dialogs,scan.visible_standard_dialogs,
+                scan.error_title_windows,scan.steam_matches);
+            fflush(log_file);
+            last_pulse=now;
+        }
         Sleep(40);
     }
     return 0;
@@ -443,7 +509,7 @@ static bool desktop_start_steam_window_watch(){
         fflush(log_file);
         return false;
     }
-    fprintf(log_file,"{\"event\":\"steam_error_window_watch_started\",\"interval_ms\":40}\n");
+    fprintf(log_file,"{\"event\":\"steam_error_window_watch_started\",\"interval_ms\":40,\"candidate_policy\":\"visible_standard_dialogs_or_error_caption\"}\n");
     fflush(log_file);
     return true;
 }
@@ -463,7 +529,6 @@ public:
     ~desktop_steam_window_watch_scope(){if(active)desktop_stop_steam_window_watch();}
     bool started()const{return active;}
 };
-
 static void desktop_log_platform_module_state(const char* phase){
     struct ModuleEntry{const wchar_t* filename;const char* label;};
     static const ModuleEntry modules[]={

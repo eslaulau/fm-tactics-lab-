@@ -360,6 +360,16 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
             child.index('LoadLibraryExW(image,nullptr')
         )
 
+    def test_host_censuses_standard_and_error_dialogs_even_without_steam_text(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('desktop_contains_error_marker', host)
+        self.assertIn('L"错误"', host)
+        self.assertIn('steam_dialog_candidate_observed', host)
+        self.assertIn('visible_standard_dialogs', host)
+        self.assertIn('steam_error_window_watch_pulse', host)
+        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
+        self.assertIn('"process_path":%s', host)
+
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('std::recursive_mutex worker_log_lock', host)
