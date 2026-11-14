@@ -1655,7 +1655,7 @@ static int scan_activation(HMODULE module,const fs::path& path){
     // file-backed section window, not only words whose on-disk value is 1.
     // Keep loader-time image differences separate from post-snapshot mutations.
     // Never writes engine memory or forces the activation gate.
-    constexpr uint32_t configured_gate_rva=0x1718f818;
+    constexpr uint32_t configured_gate_rva=compat_activation_flag;
     constexpr uint32_t scan_radius=0x100000; // 1 MiB on either side of the gate.
     constexpr DWORD fast_sample_interval_ms=25;
     constexpr DWORD fast_sample_window_ms=500;
@@ -2076,9 +2076,12 @@ static int child(bool run_match){
     if(!game_runtime_absent)return 100;
     if(policy_audit)return audit_policies();
     if(desktop_find_activation)return scan_activation(module,fs::path(image));
-    auto flag=(volatile unsigned int*)((unsigned char*)module+0x1718f818);
+    if(!compat_activation_flag){
+        fputs("{\\"event\\":\\"activation_flag_unmapped\\"}\\n",log_file);fflush(log_file);return 82;
+    }
+    auto flag=(volatile unsigned int*)((unsigned char*)module+compat_activation_flag);
     auto activation_wait_started=GetTickCount64();
-    fprintf(log_file,"{\"event\":\"native_activation_gate_initial\",\"rva\":\"0x1718f818\",\"word\":%u}\n",*flag);fflush(log_file);
+    fprintf(log_file,"{\\"event\\":\\"native_activation_gate_initial\\",\\"rva\\":\\"0x%x\\",\\"word\\":%u}\\n",compat_activation_flag,*flag);fflush(log_file);
     for(unsigned i=0;i<100;i++){
         if(*flag==0){
             desktop_check_cancel();
