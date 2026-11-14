@@ -1451,16 +1451,53 @@ static int scan_activation(HMODULE module,const fs::path& path){
             static_cast<unsigned long long>(region_base-image_base):0;
         const unsigned long long allocation_base_rva=queried&&allocation_base>=image_base?
             static_cast<unsigned long long>(allocation_base-image_base):0;
+        // The observed 64-bit values resemble a possible {RVA, tag/size}
+        // pair, but do not assume that interpretation. Resolve the low
+        // DWORD only when it is safely inside this mapped image, and capture
+        // its section, page properties and a small read-only byte preview.
+        const uint32_t target_rva=static_cast<uint32_t>(final_qword&0xffffffffu);
+        const uint32_t target_high32=static_cast<uint32_t>(final_qword>>32);
+        const bool target_low32_in_image=target_rva<nt->OptionalHeader.SizeOfImage;
+        std::array<char,9> target_section_name{};
+        const IMAGE_SECTION_HEADER* target_section=nullptr;
+        if(target_low32_in_image){
+            for(unsigned si=0;si<nt->FileHeader.NumberOfSections;si++){
+                const auto& candidate_section=sections[si];
+                const uint32_t extent=std::max(candidate_section.Misc.VirtualSize,candidate_section.SizeOfRawData);
+                if(target_rva>=candidate_section.VirtualAddress&&
+                   target_rva<candidate_section.VirtualAddress+extent){
+                    target_section=&candidate_section;
+                    memcpy(target_section_name.data(),candidate_section.Name,8);
+                    break;
+                }
+            }
+        }
+        MEMORY_BASIC_INFORMATION target_region={};
+        const SIZE_T target_queried=target_low32_in_image?
+            VirtualQuery(base+target_rva,&target_region,sizeof(target_region)):0;
+        unsigned char target_preview[64]={};
+        SIZE_T target_read=0;
+        if(target_queried&&target_region.State==MEM_COMMIT&&
+           !(target_region.Protect&(PAGE_NOACCESS|PAGE_GUARD))){
+            ReadProcessMemory(GetCurrentProcess(),base+target_rva,target_preview,sizeof(target_preview),&target_read);
+        }
+        char target_preview_hex[129]={};
+        for(unsigned bi=0;bi<target_read&&bi<sizeof(target_preview);bi++)
+            sprintf_s(target_preview_hex+2*bi,3,"%02x",target_preview[bi]);
         char context[65]={};
         for(unsigned i=0;i<32&&candidate.offset+i<disk.size();i++)
             sprintf_s(context+2*i,3,"%02x",disk[candidate.offset+i]);
-        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"distance_to_gate\":%u,\"disk_value\":%u,\"at_load\":%u,\"final\":%u,\"first_change_ms\":%d,\"last_change_ms\":%d,\"zero_ms\":%d,\"changes\":%u,\"loaded_image_difference\":%s,\"qword_rva\":\"0x%x\",\"disk_qword\":\"0x%016llx\",\"at_load_qword\":\"0x%016llx\",\"final_qword\":\"0x%016llx\",\"virtual_query_ok\":%s,\"region_base_rva\":\"0x%llx\",\"allocation_base_rva\":\"0x%llx\",\"region_size\":%llu,\"memory_state\":\"0x%lx\",\"memory_protect\":\"0x%lx\",\"memory_type\":\"0x%lx\",\"disk\":\"%s\"}\n",
+        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"distance_to_gate\":%u,\"disk_value\":%u,\"at_load\":%u,\"final\":%u,\"first_change_ms\":%d,\"last_change_ms\":%d,\"zero_ms\":%d,\"changes\":%u,\"loaded_image_difference\":%s,\"qword_rva\":\"0x%x\",\"disk_qword\":\"0x%016llx\",\"at_load_qword\":\"0x%016llx\",\"final_qword\":\"0x%016llx\",\"qword_low32_as_rva\":\"0x%x\",\"qword_high32\":%u,\"target_low32_in_image\":%s,\"target_section\":\"%s\",\"target_virtual_query_ok\":%s,\"target_memory_state\":\"0x%lx\",\"target_memory_protect\":\"0x%lx\",\"target_memory_type\":\"0x%lx\",\"target_preview_read\":%llu,\"target_preview_hex\":\"%s\",\"virtual_query_ok\":%s,\"region_base_rva\":\"0x%llx\",\"allocation_base_rva\":\"0x%llx\",\"region_size\":%llu,\"memory_state\":\"0x%lx\",\"memory_protect\":\"0x%lx\",\"memory_type\":\"0x%lx\",\"disk\":\"%s\"}\n",
             rva,distance,candidate.disk_value,candidate.first,candidate.last,candidate.first_change_ms,
             candidate.last_change_ms,candidate.zero_ms,candidate.changes,
             candidate.first!=candidate.disk_value?"true":"false",
             window_start+pair_offset,static_cast<unsigned long long>(disk_qword),
             static_cast<unsigned long long>(loaded_qword),static_cast<unsigned long long>(final_qword),
-            queried?"true":"false",region_base_rva,allocation_base_rva,
+            target_rva,target_high32,target_low32_in_image?"true":"false",
+            target_section_name.data(),target_queried?"true":"false",
+            target_queried?target_region.State:0UL,target_queried?target_region.Protect:0UL,
+            target_queried?target_region.Type:0UL,static_cast<unsigned long long>(target_read),
+            target_preview_hex,queried?"true":"false",region_base_rva,allocation_base_rva,
             queried?static_cast<unsigned long long>(region.RegionSize):0ULL,
             queried?region.State:0UL,queried?region.Protect:0UL,queried?region.Type:0UL,context);
     }

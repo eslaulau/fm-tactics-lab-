@@ -221,6 +221,19 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('if(candidate.changes||candidate.offset==gate_offset)', scanner)
         self.assertNotIn('candidate.first==0?0:-1', scanner)
 
+    def test_activation_scan_resolves_qword_low_dword_only_as_bounded_image_rva(self):
+        scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
+        self.assertIn('qword_low32_as_rva', scanner)
+        self.assertIn('qword_high32', scanner)
+        self.assertIn('target_low32_in_image', scanner)
+        self.assertIn('target_section_name', scanner)
+        self.assertIn('VirtualQuery(base+target_rva', scanner)
+        self.assertIn('ReadProcessMemory(GetCurrentProcess(),base+target_rva', scanner)
+        self.assertIn('target_preview_hex', scanner)
+        self.assertIn('target_memory_protect', scanner)
+        self.assertNotIn('WriteProcessMemory', scanner)
+        self.assertNotIn('VirtualProtect', scanner)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
