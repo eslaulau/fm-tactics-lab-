@@ -27,6 +27,7 @@ namespace fs=std::filesystem;
 static fs::path bundle,fixture,output;
 static fs::path desktop_game_root;
 static std::vector<DLL_DIRECTORY_COOKIE> desktop_dll_directory_cookies;
+static std::vector<HMODULE> desktop_platform_stub_modules;
 static fs::path dump_input;
 static fs::path scenario_file;
 static bool seed_override=false;
@@ -51,8 +52,10 @@ static void* at(uintptr_t rva){
 
 static const char* desktop_runtime_dll_names[] = {
     "icuuc65.dll", "icuin65.dll", "icudt65.dll",
-    "EOSSDK-Win64-Shipping.dll", "PartyWin.dll",
-    "PlayFabMultiplayerWin.dll", "steam_api64.dll"
+    "EOSSDK-Win64-Shipping.dll", "steam_api64.dll"
+};
+static const wchar_t* desktop_platform_stub_names[] = {
+    L"PartyWin.dll", L"PlayFabMultiplayerWin.dll"
 };
 
 static void desktop_append_runtime_dir(std::vector<fs::path>& dirs, const fs::path& candidate){
@@ -126,8 +129,85 @@ static bool desktop_prepare_runtime_dll_search(){
         return false;
     }
     fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu}\n",added,sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]));fflush(log_file);
+    for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     return true;
 }
+static bool desktop_load_platform_stub(const wchar_t* name){
+    auto path=bundle/L"platform-stubs"/name;
+    std::error_code error;
+    if(!fs::is_regular_file(path,error)||error){
+        fprintf(log_file,"{\"event\":\"platform_stub_missing\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+        return false;
+    }
+    auto module=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!module){
+        fprintf(log_file,"{\"event\":\"platform_stub_load_failed\",\"name\":\"%ls\",\"error\":%lu}\n",name,GetLastError());fflush(log_file);
+        return false;
+    }
+    if(GetModuleHandleW(name)!=module){
+        fprintf(log_file,"{\"event\":\"platform_stub_module_identity_mismatch\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+        return false;
+    }
+    desktop_platform_stub_modules.push_back(module);
+    fprintf(log_file,"{\"event\":\"platform_stub_preloaded\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+    return true;
+}
+
+static bool desktop_verify_platform_stubs(){
+    if(desktop_platform_stub_modules.size()!=sizeof(desktop_platform_stub_names)/sizeof(desktop_platform_stub_names[0]))return false;
+    for(size_t i=0;i<desktop_platform_stub_modules.size();i++){
+        auto actual=GetModuleHandleW(desktop_platform_stub_names[i]);
+        if(actual!=desktop_platform_stub_modules[i]){
+            fprintf(log_file,"{\"event\":\"platform_stub_binding_mismatch\",\"name\":\"%ls\"}\n",desktop_platform_stub_names[i]);fflush(log_file);
+            return false;
+        }
+        fprintf(log_file,"{\"event\":\"platform_stub_binding_verified\",\"name\":\"%ls\"}\n",desktop_platform_stub_names[i]);fflush(log_file);
+    }
+    return true;
+}
+
+static std::string desktop_json_string(const std::wstring& value){
+    if(value.empty())return "\"\"";
+    int length=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+    if(length<=0)return "\"\"";
+    std::string utf8(static_cast<size_t>(length),'\0');
+    WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),utf8.data(),length,nullptr,nullptr);
+    std::string escaped="\"";
+    for(unsigned char c:utf8){
+        if(c=='\\')escaped+="\\\\";
+        else if(c=='\"')escaped+="\\\"";
+        else if(c<0x20){
+            char buffer[7]={};
+            sprintf_s(buffer,"\\u%04x",static_cast<unsigned>(c));
+            escaped+=buffer;
+        }else escaped.push_back(static_cast<char>(c));
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+static void desktop_log_platform_module_state(const char* phase){
+    struct ModuleEntry{const wchar_t* filename;const char* label;};
+    static const ModuleEntry modules[]={
+        {L"EOSSDK-Win64-Shipping.dll","EOSSDK-Win64-Shipping.dll"},
+        {L"steam_api64.dll","steam_api64.dll"},
+        {L"PartyWin.dll","PartyWin.dll"},
+        {L"PlayFabMultiplayerWin.dll","PlayFabMultiplayerWin.dll"},
+        {L"icuuc65.dll","icuuc65.dll"},
+        {L"icuin65.dll","icuin65.dll"},
+        {L"icudt65.dll","icudt65.dll"}
+    };
+    for(const auto& entry:modules){
+        auto module=GetModuleHandleW(entry.filename);
+        wchar_t path[32768]={};
+        DWORD length=module?GetModuleFileNameW(module,path,static_cast<DWORD>(sizeof(path)/sizeof(path[0]))):0;
+        auto path_json=desktop_json_string(length?std::wstring(path,length):std::wstring());
+        fprintf(log_file,"{\"event\":\"platform_module_state\",\"phase\":\"%s\",\"name\":\"%s\",\"loaded\":%s,\"path\":%s,\"base\":\"0x%llx\"}\n",
+                phase,entry.label,module?"true":"false",path_json.c_str(),static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(module)));
+    }
+    fflush(log_file);
+}
+
 static int audit_policies(){
     std::vector<uint32_t> positions;
     for(auto row:fm27_role_positions)if(std::find(positions.begin(),positions.end(),row.position)==positions.end())positions.push_back(row.position);
@@ -717,9 +797,13 @@ static int native_match(void* interface_object){
     *(void**)at(0x581cab0)=interface_object;
     if(!worker_bootstrapped){
     SetCurrentDirectoryW(bundle.c_str());
-    auto platform=((unsigned char(*)(unsigned int))at(0x9fa910))(3);
-    fprintf(log_file,"{\"event\":\"native_platform_initialized\",\"accepted\":%s}\n",platform?"true":"false");fflush(log_file);
-    if(!platform)desktop_finish_and_exit(94);
+    desktop_log_platform_module_state("before_native_initializer");
+    auto initializer_started=GetTickCount64();
+    auto initializer_result=((unsigned char(*)(unsigned int))at(0x9fa910))(3);
+    auto initializer_elapsed=GetTickCount64()-initializer_started;
+    fprintf(log_file,"{\"event\":\"native_initializer_gate_result\",\"rva\":\"0x9fa910\",\"argument\":3,\"returned\":%s,\"elapsed_ms\":%llu,\"thread_id\":%lu}\n",initializer_result?"true":"false",static_cast<unsigned long long>(initializer_elapsed),GetCurrentThreadId());fflush(log_file);
+    desktop_log_platform_module_state("after_native_initializer");
+    if(!initializer_result)desktop_finish_and_exit(94);
     // The game normally supplies ICU common data through its file manager.
     // The headless host supplies the unchanged original common-data file.
     auto icu=GetModuleHandleW(L"icuuc65.dll");
@@ -1060,12 +1144,16 @@ static int child(bool run_match){
     // Installation app manifest metadata, not a fabricated ownership response.
     SetEnvironmentVariableW(L"SteamAppId",L"4530370");
     SetEnvironmentVariableW(L"SteamGameId",L"4530370");
+    if(!SetEnvironmentVariableW(L"FM27_PLATFORM_STUB_LOG",output.c_str())){
+        fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
+    }
     if(!desktop_prepare_runtime_dll_search())return 81;
     fprintf(log_file,"{\"event\":\"windows_load_started\"}\n");fflush(log_file);
     auto module=LoadLibraryExW(image,nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
     fprintf(log_file,"{\"event\":\"windows_load_returned\",\"success\":%s,\"error\":%lu}\n",module?"true":"false",GetLastError());fflush(log_file);
     if(!module)return 81;
     native_base=(unsigned char*)module;
+    if(!desktop_verify_platform_stubs())return 96;
     timing_loaded=GetTickCount64();
     bool game_runtime_absent=!GetModuleHandleW(L"fm.exe")&&!GetModuleHandleW(L"UnityPlayer.dll")&&!GetModuleHandleW(L"GameAssembly.dll");
     fprintf(log_file,"{\"event\":\"runtime_dependencies_checked\",\"fm_exe_unity_player_game_assembly_absent\":%s}\n",game_runtime_absent?"true":"false");fflush(log_file);
