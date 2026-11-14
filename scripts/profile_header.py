@@ -2,7 +2,15 @@
 import json
 
 def header(profile):
-    lines = ['#pragma once', 'static const char* compat_profile_id=' + json.dumps(profile['id']) + ';', 'struct CompatRange {unsigned rva,size;const unsigned char* bytes;};']
+    activation_flag = profile.get('activation_flag_rva')
+    if not isinstance(activation_flag, int) or activation_flag <= 0 or activation_flag % 4:
+        raise ValueError('Adapter profile must define a non-zero, 4-byte-aligned activation_flag_rva')
+    lines = [
+        '#pragma once',
+        'static const char* compat_profile_id=' + json.dumps(profile['id']) + ';',
+        'static const unsigned compat_activation_flag=' + str(activation_flag) + 'u;',
+        'struct CompatRange {unsigned rva,size;const unsigned char* bytes;};'
+    ]
     for i, r in enumerate(profile['ranges']):
         lines.append('static const unsigned char compat_bytes_' + str(i) + '[]={' + ','.join(('0x' + r['hex'][j:j + 2] for j in range(0, len(r['hex']), 2))) + '};')
     lines.append('static const CompatRange compat_ranges[]={' + ','.join(('{' + str(r['rva']) + ',' + str(len(r['hex']) // 2) + ',compat_bytes_' + str(i) + '}' for i, r in enumerate(profile['ranges']))) + '};')
