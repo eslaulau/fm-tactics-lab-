@@ -197,12 +197,12 @@ def initialize(root):
             _, executable, profile_path, version_path = _adapter_paths(native, spec)
             # Backward-compatible staging lets the existing batch worker,
             # provenance and diagnostics keep using fm27_native/FM27Simulator.exe.
-            if not executable.is_file() or not profile_path.is_file():
+            if not executable.is_file() or not profile_path.is_file() or not version_path.is_file():
                 if spec['id'] == registry['default_adapter']:
                     executable = native / 'FM27Simulator.exe'
                     profile_path = native / 'engine_compat_profile.json'
                     version_path = native / 'adapter_version.json'
-            if not executable.is_file() or not profile_path.is_file():
+            if not executable.is_file() or not profile_path.is_file() or not version_path.is_file():
                 close_leases()
                 return {
                     **status,
@@ -210,6 +210,20 @@ def initialize(root):
                     'adapter_id': spec['id'],
                     'message': f'适配器 {spec["id"]} 尚未构建。请使用 scripts\\build_native.py --adapter {spec["id"]} 重新构建。'
                 }
+        if spec is not None:
+            selected_profile = json.loads(profile_path.read_text(encoding='utf8'))
+            selected_version = json.loads(version_path.read_text(encoding='utf8'))
+            expected_reference = str(spec['reference_sha256']).lower()
+            if (selected_profile.get('reference_sha256', '').lower() != expected_reference or
+                    selected_version.get('reference_dll_sha256', '').lower() != expected_reference):
+                close_leases()
+                return {
+                    **status,
+                    'reason': 'adapter_metadata_mismatch',
+                    'adapter_id': spec['id'],
+                    'message': '适配器注册表、兼容配置和版本信息的 DLL 指纹不一致，已拒绝启动。'
+                }
+
         status.update(
             actual_dll_sha256=actual,
             adapter_id=spec['id'] if spec else 'legacy',
