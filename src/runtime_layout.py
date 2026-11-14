@@ -21,6 +21,11 @@ FAIL_CLOSED_PLATFORM_STUBS = (
     'PlayFabMultiplayerWin.dll',
 )
 
+PLATFORM_PROBE_DLLS = (
+    'steam_api64.dll',
+    'EOSSDK-Win64-Shipping.dll',
+)
+
 
 def runtime_search_dirs(game_root=None, native_root=None):
     """Return deterministic runtime search locations in priority order."""
@@ -48,14 +53,18 @@ def runtime_search_dirs(game_root=None, native_root=None):
     return tuple(result)
 
 
-def resolve_runtime_dlls(game_root=None, native_root=None):
-    """Resolve required DLLs, fail-closed stubs, and conflicting copies."""
+def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=None):
+    """Resolve engine DLLs, fail-closed stubs, and optional diagnostic probes."""
+    if platform_probe_mode is None:
+        platform_probe_mode = os.environ.get('FM27_PLATFORM_PROBE_MODE') == '1'
     directories = runtime_search_dirs(game_root, native_root)
     found = {}
     missing = []
     ambiguous = {}
 
     for name in RUNTIME_DLLS:
+        if platform_probe_mode and name in PLATFORM_PROBE_DLLS:
+            continue
         matches = [
             directory / name
             for directory in directories
@@ -91,6 +100,20 @@ def resolve_runtime_dlls(game_root=None, native_root=None):
     else:
         missing_stubs.extend(FAIL_CLOSED_PLATFORM_STUBS)
 
+    probes = {}
+    missing_probes = []
+    if platform_probe_mode:
+        if native_root is not None:
+            probe_root = Path(native_root) / 'platform-probes'
+            for name in PLATFORM_PROBE_DLLS:
+                path = probe_root / name
+                if path.is_file():
+                    probes[name] = path
+                else:
+                    missing_probes.append(name)
+        else:
+            missing_probes.extend(PLATFORM_PROBE_DLLS)
+
     return {
         'found': found,
         'missing': tuple(missing),
@@ -98,4 +121,7 @@ def resolve_runtime_dlls(game_root=None, native_root=None):
         'search_dirs': directories,
         'platform_stubs': stubs,
         'missing_platform_stubs': tuple(missing_stubs),
+        'platform_probes': probes,
+        'missing_platform_probes': tuple(missing_probes),
+        'platform_probe_mode': bool(platform_probe_mode),
     }
