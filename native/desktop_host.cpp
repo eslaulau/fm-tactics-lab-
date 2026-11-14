@@ -1318,7 +1318,7 @@ static int scan_activation(HMODULE module,const fs::path& path){
     const uint32_t section_start=gate_section->VirtualAddress;
     const uint32_t section_end=section_start+gate_section->SizeOfRawData;
     const uint32_t window_start=std::max(section_start,configured_gate_rva-scan_radius)&~3u;
-    const uint32_t window_end=std::min(section_end,configured_gate_rva+scan_radius+sizeof(uint32_t))&~3u;
+    const uint32_t window_end=std::min(section_end,configured_gate_rva+scan_radius+4u)&~3u;
     if(window_end<=window_start||window_end-window_start>2*scan_radius+8){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_scan_window\"}\n",log_file);fflush(log_file);return 120;
     }
