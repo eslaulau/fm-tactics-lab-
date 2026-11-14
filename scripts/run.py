@@ -39,7 +39,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-root', required=True, type=Path)
     parser.add_argument('--port', type=int, default=18765)
-                        help='Replace Steam/EOS imports with API-identifying fail-fast probes; never returns platform success')
     args = parser.parse_args()
     if os.name != 'nt' or sys.version_info[:2] != (3, 12):
         raise SystemExit('This source edition requires Windows x64 and Python 3.12.')

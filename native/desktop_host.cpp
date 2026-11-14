@@ -40,7 +40,6 @@ static bool policy_audit=false;
 static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
-static constexpr bool desktop_offline_platform_mode=true;
 static bool desktop_find_activation=false;
 static std::vector<HMODULE> desktop_platform_probe_modules;
 static unsigned char* native_base;
@@ -233,7 +232,6 @@ static bool desktop_verify_platform_probe_modules(){
 }
 
 static bool desktop_verify_platform_probe_iat(){
-    if(!desktop_offline_platform_mode)return true;
     struct Target{const char* dll; HMODULE module; size_t count;};
     const Target targets[]={
         {"steam_api64.dll",GetModuleHandleW(L"steam_api64.dll"),11},
