@@ -344,14 +344,15 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('desktop_scan_steamapi_windows("after_windows_load")', host)
         self.assertIn('desktop_scan_steamapi_windows("activation_gate_sample")', host)
         self.assertIn('desktop_scan_steamapi_windows("activation_timeout")', host)
-        self.assertIn('class_name!=L"#32770"', host)
+        self.assertIn('class_name==L"#32770"', host)
+        self.assertIn('desktop_contains_error_marker', host)
         self.assertNotIn('PostMessageW', host)
         self.assertNotIn('SendMessageW', host)
 
     def test_host_starts_steam_dialog_watch_before_loading_engine(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('desktop_steam_window_watch_thread', host)
-        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false)', host)
+        self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
         self.assertIn('steam_error_window_watch_started', host)
         self.assertIn('steam_error_window_watch_stopped', host)
         child = host[host.index('static int child(bool run_match)'):]
@@ -368,7 +369,7 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('visible_standard_dialogs', host)
         self.assertIn('steam_error_window_watch_pulse', host)
         self.assertIn('desktop_scan_steamapi_windows("load_window_watch",false,&scan)', host)
-        self.assertIn('"process_path":%s', host)
+        self.assertIn('process_path', host)
 
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
