@@ -2,6 +2,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <stdio.h>
+#include "platform_stub_iat_verifier.h"
 
 using GetFixtureImportedAddressesFn = const void* const* (__cdecl*)(unsigned*);
 
@@ -29,6 +30,24 @@ int wmain(int argc, wchar_t** argv) {
         argv[3], nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!fixture) return fail(L"could not load the fixture importer", GetLastError());
 
+    const auto verified = fm27_platform_boundary::verify_imports(fixture, party, playfab);
+    if (!verified.ok()) {
+        fwprintf(stderr, L"FAIL: shared IAT verifier rejected the importer (reason=%S, module=%d, index=%zu)\n",
+                 fm27_platform_boundary::error_name(verified.error),
+                 verified.target, verified.index);
+        return 2;
+    }
+    if (verified.party_imports != 20 || verified.playfab_imports != 19)
+        return fail(L"shared IAT verifier returned an unexpected import count");
+
+    const auto swapped = fm27_platform_boundary::verify_imports(fixture, playfab, party);
+    if (swapped.error != fm27_platform_boundary::IatError::iat_target_mismatch)
+        return fail(L"shared IAT verifier did not reject swapped stub-module identities");
+
+    const auto null_module = fm27_platform_boundary::verify_imports(nullptr, party, playfab);
+    if (null_module.error != fm27_platform_boundary::IatError::invalid_module)
+        return fail(L"shared IAT verifier did not reject a null importer module");
+
     auto get_addresses = reinterpret_cast<GetFixtureImportedAddressesFn>(
         GetProcAddress(fixture, "GetFixtureImportedAddresses"));
     if (!get_addresses) return fail(L"fixture export was not found", GetLastError());
@@ -47,11 +66,11 @@ int wmain(int argc, wchar_t** argv) {
         if (memory.AllocationBase != expected) {
             fwprintf(stderr, L"FAIL: IAT address %u belongs to %p; expected %p\n",
                      index, memory.AllocationBase, expected);
-            return 2;
+            return 3;
         }
     }
 
-    wprintf(L"PASS: Windows bound all 20 PartyWin and 19 PlayFab imports to the preloaded fail-fast stubs.\n");
+    wprintf(L"PASS: the shared host IAT verifier accepted all 20 PartyWin and 19 PlayFab imports, and rejected swapped module identities.\n");
     FreeLibrary(fixture);
     FreeLibrary(playfab);
     FreeLibrary(party);

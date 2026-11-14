@@ -8,6 +8,9 @@ on:
     paths:
       - "native/platform_dependency_stub.cpp"
       - "native/desktop_host.cpp"
+      - "native/platform_stub_iat_verifier.h"
+      - "native/platform_stub_loader_smoke.cpp"
+      - "native/platform_stub_import_fixture.cpp"
       - "native/profile_metadata.json"
       - "src/runtime_layout.py"
       - "tests/test_platform_stub_boundary.py"

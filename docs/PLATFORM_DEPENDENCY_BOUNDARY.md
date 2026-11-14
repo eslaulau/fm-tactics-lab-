@@ -51,7 +51,7 @@ initializer call at RVA 0x9FA910, together with its return value, duration and
 thread ID. The initializer is retained unchanged; the event name deliberately
 does not label it as a Steam/EOS initializer.
 
-The import-table verification runs immediately after loading game_plugin.dll,
+The shared import-table verifier checks the mapped module headers, import descriptor terminator, unique PartyWin/PlayFab descriptors, thunk-table bounds, exact 20/19 counts, and each executable IAT address's owning module. The import-table verification runs immediately after loading game_plugin.dll,
 before native activation or match setup. Any count mismatch, unresolved import,
 or IAT address outside the expected stub module fails closed with a diagnostic
 exit code.
@@ -63,7 +63,7 @@ compatibility header; the header contains placeholder bytes and is never used
 for runtime or packaged output. The same CI compiles both x64 stub DLLs and builds a synthetic importer that
 contains the same 39 PartyWin/PlayFab import names. It preloads the two stubs,
 loads that importer, and checks all 39 resolved function addresses with
-`VirtualQuery`; none of the platform functions are called. CI also runs
+`VirtualQuery`; none of the platform functions are called. The smoke executable runs the same shared PE/IAT verifier used by the actual host, and confirms it rejects swapped PartyWin/PlayFab module identities. The verifier also fails closed on duplicate or missing descriptors and malformed thunk tables. CI also runs
 `scripts/verify_platform_stub_exports.py` against the resulting PE files. The
 verifier compares actual export-name sets against the pinned original engine
 import manifest, checks that all named exports share one fail-fast code

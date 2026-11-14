@@ -9,6 +9,8 @@ HOST = ROOT / 'native' / 'desktop_host.cpp'
 PROFILE = ROOT / 'native' / 'profile_metadata.json'
 RUNNER = ROOT / 'scripts' / 'run.py'
 VERIFIER = ROOT / 'scripts' / 'verify_platform_stub_exports.py'
+IAT_VERIFIER = ROOT / 'native' / 'platform_stub_iat_verifier.h'
+SMOKE = ROOT / 'native' / 'platform_stub_loader_smoke.cpp'
 BUILD_NATIVE = ROOT / 'scripts' / 'build_native.py'
 
 PARTY_EXPORTS = {
@@ -108,11 +110,25 @@ class PlatformStubHostTests(unittest.TestCase):
         cls.host = HOST.read_text(encoding='utf-8')
 
     def test_import_address_table_is_verified_against_stub_module(self):
+        verifier = IAT_VERIFIER.read_text(encoding='utf-8')
         self.assertIn('desktop_verify_platform_stub_iat()', self.host)
-        self.assertIn('VirtualQuery(address,&memory,sizeof(memory))', self.host)
-        self.assertIn('memory.AllocationBase!=expected', self.host)
-        self.assertIn('expected_count=target==0?20:19', self.host)
-        self.assertIn('observed[0]!=20||observed[1]!=19', self.host)
+        self.assertIn('fm27_platform_boundary::verify_imports', self.host)
+        self.assertIn('VirtualQuery(address, &memory, sizeof(memory))', verifier)
+        self.assertIn('memory.AllocationBase != module', verifier)
+        self.assertIn('IatError::duplicate_descriptor', verifier)
+        self.assertIn('IatError::iat_target_mismatch', verifier)
+        self.assertIn('IatError::missing_descriptor_terminator', verifier)
+
+
+    def test_windows_smoke_executes_the_same_iat_verifier_as_the_host(self):
+        smoke = SMOKE.read_text(encoding='utf-8')
+        verifier = IAT_VERIFIER.read_text(encoding='utf-8')
+        self.assertIn('#include "platform_stub_iat_verifier.h"', self.host)
+        self.assertIn('#include "platform_stub_iat_verifier.h"', smoke)
+        self.assertIn('verify_imports(fixture, party, playfab)', smoke)
+        self.assertIn('IatError::iat_target_mismatch', smoke)
+        self.assertIn('duplicate_descriptor', verifier)
+        self.assertIn('missing_import_descriptor', verifier)
 
     def test_native_initializer_is_preserved_and_labelled_neutrally(self):
         self.assertIn('at(0x9fa910))(3)', self.host)
