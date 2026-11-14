@@ -234,6 +234,22 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertNotIn('WriteProcessMemory', scanner)
         self.assertNotIn('VirtualProtect', scanner)
 
+    def test_activation_scan_resolves_target_to_bounded_runtime_function_metadata(self):
+        scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
+        self.assertIn('RtlLookupFunctionEntry', scanner)
+        self.assertIn('target_function_image_base==image_base', scanner)
+        self.assertIn('target_function->BeginAddress<=target_rva', scanner)
+        self.assertIn('target_rva<target_function->EndAddress', scanner)
+        self.assertIn('target_function_unwind', scanner)
+        self.assertIn('target_function_delta', scanner)
+        self.assertIn('target_section_characteristics', scanner)
+        self.assertIn('target_function_preview_hex', scanner)
+        self.assertIn('sizeof(target_function_preview)', scanner)
+        self.assertIn('target_function_end-target_function_begin', scanner)
+        self.assertIn('target_function_found', scanner)
+        self.assertNotIn('WriteProcessMemory', scanner)
+        self.assertNotIn('VirtualProtect', scanner)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
