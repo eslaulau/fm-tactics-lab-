@@ -12,6 +12,10 @@ VERIFIER = ROOT / 'scripts' / 'verify_platform_stub_exports.py'
 IAT_VERIFIER = ROOT / 'native' / 'platform_stub_iat_verifier.h'
 SMOKE = ROOT / 'native' / 'platform_stub_loader_smoke.cpp'
 BUILD_NATIVE = ROOT / 'scripts' / 'build_native.py'
+PROBE_TEMPLATE = ROOT / 'native' / 'platform_probe_stub_template.cpp'
+PROBE_BUILDER = ROOT / 'scripts' / 'build_platform_probe_stubs.py'
+PROBE_VERIFIER = ROOT / 'scripts' / 'verify_platform_probe_stubs.py'
+LIFECYCLE = ROOT / 'native' / 'native_steam_lifecycle.h'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -57,6 +61,32 @@ PLAYFAB_EXPORTS = {
     'PFMultiplayerStartProcessingLobbyStateChanges',
     'PFMultiplayerUninitialize',
 }
+
+
+class PlatformProbeBuilderTests(unittest.TestCase):
+    def test_probe_manifest_covers_exact_steam_and_eos_imports(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from build_platform_probe_stubs import MODULES, imports_for
+        metadata = json.loads(PROFILE.read_text(encoding='utf-8'))
+        self.assertEqual(len(imports_for(metadata, 'steam_api64.dll')), 11)
+        self.assertEqual(len(imports_for(metadata, 'eossdk-win64-shipping.dll')), 109)
+        self.assertEqual(
+            {name for name in MODULES},
+            {'steam_api64.dll', 'EOSSDK-Win64-Shipping.dll'})
+
+    def test_each_platform_import_gets_a_named_fail_fast_wrapper(self):
+        template = PROBE_TEMPLATE.read_text(encoding='utf-8')
+        builder = PROBE_BUILDER.read_text(encoding='utf-8')
+        verifier = PROBE_VERIFIER.read_text(encoding='utf-8')
+        self.assertIn('DEFINE_PLATFORM_PROBE({name})', builder)
+        self.assertIn('Probe_{name}', builder)
+        self.assertIn('platform_probe_unexpected_call', template)
+        self.assertIn('CaptureStackBackTrace', template)
+        self.assertIn('engine_rva', template)
+        self.assertIn('RaiseFailFastException', template)
+        self.assertIn('distinct_api_traps', verifier)
+        self.assertIn('kernel32.dll', verifier)
+        self.assertNotIn('return 0;', template)
 
 
 class PlatformStubBoundaryTests(unittest.TestCase):
@@ -139,6 +169,25 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('after_native_initializer', self.host)
         self.assertNotIn('native_platform_initialized', self.host)
 
+    def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
+        self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
+        self.assertIn('desktop_load_platform_probe', self.host)
+        self.assertIn('desktop_verify_platform_probe_iat', self.host)
+        self.assertIn('verify_named_imports', self.host)
+        self.assertIn('steam_login_required\\":false', self.host)
+        self.assertIn('platform_success_faked\\":false', self.host)
+        lifecycle = LIFECYCLE.read_text(encoding='utf-8')
+        self.assertIn('desktop_platform_probe_mode', lifecycle)
+        self.assertIn('steam_session_cleanup_skipped', lifecycle)
+
+    def test_probe_mode_is_opt_in_from_source_runner(self):
+        runner = RUNNER.read_text(encoding='utf-8')
+        self.assertIn('--platform-probe-mode', runner)
+        self.assertIn('FM27_PLATFORM_PROBE_MODE', runner)
+        resolver = (ROOT / 'src' / 'runtime_layout.py').read_text(encoding='utf-8')
+        self.assertIn('PLATFORM_PROBE_DLLS', resolver)
+        self.assertIn('missing_platform_probes', resolver)
+
     def test_source_runner_checks_built_stubs_before_startup(self):
         runner = RUNNER.read_text(encoding='utf-8')
         self.assertIn('platform-stubs/PartyWin.dll', runner)
@@ -154,6 +203,7 @@ class PlatformStubHostTests(unittest.TestCase):
         build = BUILD_NATIVE.read_text(encoding='utf-8')
         self.assertIn("'--check-image'", build)
         self.assertIn('verify_platform_stub_exports.py', build)
+        self.assertIn('build_platform_probe_stubs.py', build)
         self.assertIn("validation.get('disposition') == 'blocked'", build)
 
 
