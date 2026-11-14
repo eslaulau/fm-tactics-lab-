@@ -1,8 +1,9 @@
-"""Resolve genuine FM27 runtime DLLs from known installation locations.
+"""Resolve genuine FM27 runtime DLLs and bundled fail-closed platform stubs.
 
-The resolver does not scan arbitrary directories or substitute SDK libraries.
-Conflicting copies are rejected because Windows does not guarantee the order
-of multiple AddDllDirectory user paths.
+Only the small set of known installation directories is searched. Steam and
+EOS remain genuine runtime dependencies. PartyWin and PlayFab Multiplayer are
+provided by build-generated stubs whose exports fail-fast if unexpectedly
+called; they never synthesize successful platform or ownership responses.
 """
 import os
 from pathlib import Path
@@ -12,9 +13,12 @@ RUNTIME_DLLS = (
     'icuin65.dll',
     'icudt65.dll',
     'EOSSDK-Win64-Shipping.dll',
+    'steam_api64.dll',
+)
+
+FAIL_CLOSED_PLATFORM_STUBS = (
     'PartyWin.dll',
     'PlayFabMultiplayerWin.dll',
-    'steam_api64.dll',
 )
 
 
@@ -45,7 +49,7 @@ def runtime_search_dirs(game_root=None, native_root=None):
 
 
 def resolve_runtime_dlls(game_root=None, native_root=None):
-    """Resolve required DLLs and report missing or conflicting copies."""
+    """Resolve required DLLs, fail-closed stubs, and conflicting copies."""
     directories = runtime_search_dirs(game_root, native_root)
     found = {}
     missing = []
@@ -74,9 +78,24 @@ def resolve_runtime_dlls(game_root=None, native_root=None):
         else:
             ambiguous[name] = tuple(matches)
 
+    stubs = {}
+    missing_stubs = []
+    if native_root is not None:
+        stub_root = Path(native_root) / 'platform-stubs'
+        for name in FAIL_CLOSED_PLATFORM_STUBS:
+            path = stub_root / name
+            if path.is_file():
+                stubs[name] = path
+            else:
+                missing_stubs.append(name)
+    else:
+        missing_stubs.extend(FAIL_CLOSED_PLATFORM_STUBS)
+
     return {
         'found': found,
         'missing': tuple(missing),
         'ambiguous': ambiguous,
         'search_dirs': directories,
+        'platform_stubs': stubs,
+        'missing_platform_stubs': tuple(missing_stubs),
     }
