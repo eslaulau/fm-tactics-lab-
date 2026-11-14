@@ -73,7 +73,12 @@ def main():
          str(stub_dir / 'PartyWin.dll'), str(stub_dir / 'PlayFabMultiplayerWin.dll')],
         cwd=ROOT, capture_output=True, text=True, check=True)
     print(verify.stdout, end='')
-    print('Built FM27Simulator.exe and verified fail-closed platform import stubs')
+    probe_dir = dest / 'platform-probes'
+    subprocess.run(
+        [sys.executable, str(ROOT / 'scripts/build_platform_probe_stubs.py'),
+         '--output', str(probe_dir)],
+        cwd=ROOT, check=True)
+    print('Built FM27Simulator.exe, fail-closed platform stubs, and Steam/EOS diagnostic probes')
 
 
 if __name__ == '__main__':
