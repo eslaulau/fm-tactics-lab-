@@ -68,7 +68,7 @@ static void platform_probe_fail(const char* api) {
 
     OutputDebugStringA(event);
     wchar_t log_path[512];
-    log_path[0] = L'\\0';
+    log_path[0] = L'\0';
     const DWORD length = GetEnvironmentVariableW(
         L"FM27_PLATFORM_STUB_LOG", log_path,
         static_cast<DWORD>(sizeof(log_path) / sizeof(log_path[0])));
