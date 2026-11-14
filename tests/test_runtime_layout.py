@@ -116,6 +116,8 @@ class RuntimeLayoutTests(unittest.TestCase):
         self.assertFalse(result['platform_probes'])
 
     def test_legacy_probe_flag_cannot_restore_real_platform_dependencies(self):
+        for name in RUNTIME_DLLS:
+            self.touch_dll(self.native / 'libs', name)
         stubs, probes = self.touch_platform_modules()
         for name in PLATFORM_PROBE_DLLS:
             self.touch_dll(self.game / 'fm_Data' / 'Plugins' / 'x86_64', name)
