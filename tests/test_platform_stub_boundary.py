@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'native' / 'platform_dependency_stub.cpp'
 HOST = ROOT / 'native' / 'desktop_host.cpp'
 PROFILE = ROOT / 'native' / 'profile_metadata.json'
+RUNNER = ROOT / 'scripts' / 'run.py'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -117,6 +118,11 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('before_native_initializer', self.host)
         self.assertIn('after_native_initializer', self.host)
         self.assertNotIn('native_platform_initialized', self.host)
+
+    def test_source_runner_checks_built_stubs_before_startup(self):
+        runner = RUNNER.read_text(encoding='utf-8')
+        self.assertIn('platform-stubs/PartyWin.dll', runner)
+        self.assertIn('platform-stubs/PlayFabMultiplayerWin.dll', runner)
 
 
 if __name__ == '__main__':
