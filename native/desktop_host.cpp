@@ -369,6 +369,10 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
     auto* scan=reinterpret_cast<desktop_steam_window_scan*>(parameter);
     if(!scan)return TRUE;
     const auto title=desktop_read_window_text(window);
+    const auto class_name=desktop_window_class(window);
+    // Only inspect child controls on standard Windows dialogs or windows whose
+    // own title already identifies SteamAPI; avoid walking every desktop tree.
+    if(class_name!=L"#32770"&&!desktop_contains_steam_api(title))return TRUE;
     desktop_window_text_collector children={};
     EnumChildWindows(window,desktop_collect_child_window_text,reinterpret_cast<LPARAM>(&children));
     if(!desktop_contains_steam_api(title)&&!desktop_contains_steam_api(children.text))return TRUE;
@@ -385,7 +389,6 @@ static BOOL CALLBACK desktop_find_steam_error_window(HWND window,LPARAM paramete
         QueryFullProcessImageNameW(process,0,process_path,&length);
         CloseHandle(process);
     }
-    const auto class_name=desktop_window_class(window);
     const auto title_json=desktop_json_string(title);
     const auto class_json=desktop_json_string(class_name);
     const auto children_json=desktop_json_string(children.text);
