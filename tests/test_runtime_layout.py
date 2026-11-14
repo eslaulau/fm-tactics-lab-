@@ -99,6 +99,32 @@ class RuntimeLayoutTests(unittest.TestCase):
             set(result['missing_platform_stubs']), set(FAIL_CLOSED_PLATFORM_STUBS))
         self.assertFalse(result['platform_stubs'])
 
+    def test_platform_probe_mode_replaces_only_steam_and_eos(self):
+        from runtime_layout import PLATFORM_PROBE_DLLS
+        for name in RUNTIME_DLLS[:3]:
+            self.touch_dll(self.native / 'libs', name)
+        for name in FAIL_CLOSED_PLATFORM_STUBS:
+            self.touch_dll(self.native / 'platform-stubs', name)
+        expected = {
+            name: self.touch_dll(self.native / 'platform-probes', name)
+            for name in PLATFORM_PROBE_DLLS
+        }
+        result = resolve_runtime_dlls(
+            self.game, self.native, platform_probe_mode=True)
+        self.assertEqual(set(result['found']), set(RUNTIME_DLLS[:3]))
+        self.assertFalse(result['missing'])
+        self.assertEqual(result['platform_probes'], expected)
+        self.assertFalse(result['missing_platform_probes'])
+        self.assertTrue(result['platform_probe_mode'])
+
+    def test_platform_probe_mode_reports_missing_probe_files(self):
+        from runtime_layout import PLATFORM_PROBE_DLLS
+        result = resolve_runtime_dlls(
+            self.game, self.native, platform_probe_mode=True)
+        self.assertEqual(set(result['missing_platform_probes']), set(PLATFORM_PROBE_DLLS))
+        self.assertNotIn('steam_api64.dll', result['missing'])
+        self.assertNotIn('EOSSDK-Win64-Shipping.dll', result['missing'])
+
 
 if __name__ == '__main__':
     unittest.main()
