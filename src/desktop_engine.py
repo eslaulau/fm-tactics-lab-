@@ -61,6 +61,13 @@ def select_adapter(registry, dll_sha256, requested=None):
             reason = spec.get('reason') or '该发行版尚无验证配置'
             raise ValueError(f'适配器 {requested} 尚未准备好：{reason}')
         return spec, 'explicit'
+    known_disabled = [item for item in registry['adapters']
+                      if item.get('enabled') is not True and
+                      item.get('reference_sha256') and
+                      str(item.get('reference_sha256')).lower() == dll_sha256.lower()]
+    if known_disabled:
+        names = ', '.join(item['id'] for item in known_disabled)
+        raise ValueError(f'本机 DLL 匹配到尚未启用的适配器：{names}；拒绝回退到其他发行版。')
     exact = [item for item in active
              if str(item.get('reference_sha256', '')).lower() == dll_sha256.lower()]
     if len(exact) == 1:
