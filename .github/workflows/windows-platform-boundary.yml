@@ -120,6 +120,16 @@ jobs:
             Pop-Location
           }
 
+      - name: Compile the desktop launcher with adapter argument forwarding
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $build = Join-Path $PWD "build\\launcher-compile-only"
+          New-Item -ItemType Directory -Force -Path $build | Out-Null
+          $csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /utf8output /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll ("/out:" + (Join-Path $build "FM27TacticsLauncher_compile_only.exe")) Launcher.cs
+          if ($LASTEXITCODE -ne 0) { throw "Desktop launcher C# compile failed" }
+
       - name: Compile both x64 fail-closed import stubs
         shell: pwsh
         run: |
