@@ -2077,11 +2077,11 @@ static int child(bool run_match){
     if(policy_audit)return audit_policies();
     if(desktop_find_activation)return scan_activation(module,fs::path(image));
     if(!compat_activation_flag){
-        fputs("{\\"event\\":\\"activation_flag_unmapped\\"}\\n",log_file);fflush(log_file);return 82;
+        fputs("{\"event\":\"activation_flag_unmapped\"}\n",log_file);fflush(log_file);return 82;
     }
     auto flag=(volatile unsigned int*)((unsigned char*)module+compat_activation_flag);
     auto activation_wait_started=GetTickCount64();
-    fprintf(log_file,"{\\"event\\":\\"native_activation_gate_initial\\",\\"rva\\":\\"0x%x\\",\\"word\\":%u}\\n",compat_activation_flag,*flag);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"native_activation_gate_initial\",\"rva\":\"0x%x\",\"word\":%u}\n",compat_activation_flag,*flag);fflush(log_file);
     for(unsigned i=0;i<100;i++){
         if(*flag==0){
             desktop_check_cancel();
