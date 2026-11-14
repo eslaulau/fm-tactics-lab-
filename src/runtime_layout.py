@@ -1,9 +1,9 @@
-"""Resolve genuine FM27 runtime DLLs and bundled fail-closed platform stubs.
+"""Resolve FM27 runtime DLLs and fail-closed platform boundary modules.
 
-Only the small set of known installation directories is searched. Steam and
-EOS remain genuine runtime dependencies. PartyWin and PlayFab Multiplayer are
-provided by build-generated stubs whose exports fail-fast if unexpectedly
-called; they never synthesize successful platform or ownership responses.
+Normal runs use the genuine Steam/EOS runtimes. Opt-in probe mode replaces
+those two dependencies with API-identifying fail-fast diagnostic DLLs.
+PartyWin and PlayFab always use build-generated fail-fast stubs; no platform
+or ownership success is synthesized.
 """
 import os
 from pathlib import Path
