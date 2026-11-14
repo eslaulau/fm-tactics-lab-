@@ -54,7 +54,7 @@ def build(output):
         subprocess.run([
             'cl', '/nologo', '/LD', '/O2', '/GS-', '/Zl', str(source_path),
             '/Fo' + str(object_path), '/link', '/NODEFAULTLIB', '/ENTRY:DllMain',
-            '/SUBSYSTEM:WINDOWS', 'kernel32.lib', '/INCREMENTAL:NO',
+            '/SUBSYSTEM:WINDOWS', 'kernel32.lib', '/INCREMENTAL:NO', '/OPT:NOICF',
             '/DEF:' + str(def_path), '/OUT:' + str(dll_path),
         ], cwd=output, check=True)
         results.append({'file': filename, 'expected_exports': expected_count,
