@@ -1459,7 +1459,7 @@ int wmain(int argc,wchar_t** argv){
         else if(arg==L"--policy-audit")policy_audit=true;
         else if(arg==L"--find-activation")desktop_find_activation=true;
         else if(arg==L"--match"){}
-        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256]\nRuns original native simulation on a private desktop. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
+        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256] [--find-activation]\nRuns original native simulation on a private desktop. --find-activation performs a read-only 20 s .00cfg scan. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
         else if((arg==L"--fixture"||arg==L"--output"||arg==L"--seed"||arg==L"--tick-step"||arg==L"--dump-input"||arg==L"--scenario-file")&&i+1<argc){
             auto value=argv[++i];
             if(arg==L"--fixture")fixture=fs::absolute(value);
