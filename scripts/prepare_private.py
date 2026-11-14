@@ -36,7 +36,7 @@ def prepare_release(executable):
     if release_hash not in TRUSTED_RELEASES:
         raise ValueError('Unrecognized release EXE: SHA256 does not match a verified release')
     expected_payload = TRUSTED_RELEASES[release_hash]
-    start, end = raw.find(b'PK\\x03\\x04'), raw.rfind(b'PK\\x05\\x06')
+    start, end = raw.find(b'PK\x03\x04'), raw.rfind(b'PK\x05\x06')
     if start < 0 or end < start or end + 22 > len(raw):
         raise ValueError('Embedded payload not found')
     comment_size = struct.unpack_from('<H', raw, end + 20)[0]
@@ -68,7 +68,7 @@ def prepare(source, catalog):
     paths.append((catalog, ROOT / 'private/catalog.json'))
     missing = [str(src) for src, _ in paths if not src.is_file()]
     if missing:
-        raise ValueError('Missing private inputs:\\n' + '\\n'.join(missing))
+        raise ValueError('Missing private inputs:\n' + '\n'.join(missing))
     for src, _ in paths:
         if src.suffix == '.json':
             json.loads(src.read_text(encoding='utf-8-sig'))
