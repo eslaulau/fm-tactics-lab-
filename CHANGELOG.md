@@ -50,7 +50,10 @@
 
 
 ## 未发布
-- 以原版 game_plugin.dll 精确 SHA256 对应的只读 IAT 调用点扫描为依据，新增 PartyWin/PlayFab Multiplayer 的实验性 fail-closed 导入桩；39 个导入名均可解析，任何意外调用都会写入诊断并 fail-fast，不会返回成功状态。EOS、Steam、认证与所有权接口继续使用原版运行库，不做伪造响应。需 Windows/MSVC 编译和实机运行继续验证。
+- 新增 `native/adapter_registry.json`，按本机 `game_plugin.dll` SHA256 选择发行版适配器；每个适配器独立生成兼容配置与原生宿主，共用现有批量调度和 fail-closed 平台边界。
+- 源码运行器与桌面打包器支持多适配器目录；桌面版可通过 `--adapter ID` 明确选择，默认按 DLL 指纹自动识别。当前 Steam 27.0.1 参考配置保持不变；Epic 适配器登记为待验证，不会使用猜测的 RVA 或跨发行版配置。
+
+- 以原版 game_plugin.dll 精确 SHA256 对应的只读 IAT 调用点扫描为依据，新增 PartyWin/PlayFab Multiplayer 的实验性 fail-closed 导入桩；39 个导入名均可解析，任何意外调用都会写入诊断并 fail-fast，不会返回成功状态。Steam/EOS 导入使用独立 fail-fast 诊断探针，不加载真实平台运行库，也不伪造认证、所有权或成功响应。需 Windows/MSVC 编译和实机运行继续验证。
 - 新增 docs/PLATFORM_DEPENDENCY_BOUNDARY.md，记录四个原版平台依赖模块的导入调用点数量、隔离边界和未闭合的间接调用限制。
 
 - 新增真实AI战术批量生成：读取每队现任主教练、当前阵容和你自己的主教练，用本机原版引擎做 0 tick 对局准备并回读完整双阶段战术；每个对手生成对手主场/对手客场两套（列表显示为「球队主场战术/球队客场战术」）并直接替换第1/2套，支持进度条、并行生成与缓存增量补齐；缓存绑定引擎与生成协议身份，引擎或适配器变化后失效重生成；导出与导入客队战术池按球队/变体合并真实战术与可用预设并报告遗漏，空库不再阻断预设导出。
