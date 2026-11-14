@@ -43,6 +43,13 @@ class NativeAdapterRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '尚未准备好'):
             select_adapter(self.registry, STEAM_SHA, 'epic_27_0_1')
 
+    def test_known_disabled_distribution_never_falls_back_to_the_steam_adapter(self):
+        registry = json.loads(json.dumps(self.registry))
+        epic = next(item for item in registry['adapters'] if item['id'] == 'epic_27_0_1')
+        epic['reference_sha256'] = '2' * 64
+        with self.assertRaisesRegex(ValueError, '尚未启用'):
+            select_adapter(registry, '2' * 64)
+
     def test_explicit_adapter_selection_is_supported_for_compatibility_trials(self):
         spec, selection = select_adapter(self.registry, '0' * 64, STEAM_ID)
         self.assertEqual(spec['id'], STEAM_ID)
