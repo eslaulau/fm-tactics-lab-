@@ -57,7 +57,7 @@ def pe_sections(raw):
     if raw[:2] != b'MZ':
         raise ValueError('Not a PE file')
     offset = struct.unpack_from('<I', raw, 0x3c)[0]
-    if raw[offset:offset + 4] != b'PE\\0\\0':
+    if raw[offset:offset + 4] != b'PE\0\0':
         raise ValueError('Invalid PE signature')
     machine, count = struct.unpack_from('<HH', raw, offset + 4)
     optional_size = struct.unpack_from('<H', raw, offset + 20)[0]
@@ -107,11 +107,11 @@ def generate(dll, adapter_id=DEFAULT_ADAPTER_ID):
 
     (build_dir / 'engine_compat_profile.h').write_text(header(profile), encoding='ascii')
     (adapter_dir / 'engine_compat_profile.json').write_text(
-        json.dumps(profile, indent=2) + '\\n', encoding='utf8')
+        json.dumps(profile, indent=2) + '\n', encoding='utf8')
     (adapter_dir / 'adapter_version.json').write_text(
-        json.dumps(version, indent=2) + '\\n', encoding='utf8')
+        json.dumps(version, indent=2) + '\n', encoding='utf8')
     (engine_root / 'adapter_registry.json').write_text(
-        json.dumps(registry, indent=2) + '\\n', encoding='utf8')
+        json.dumps(registry, indent=2) + '\n', encoding='utf8')
 
     # Keep the historical single-adapter metadata paths working for existing
     # diagnostic scripts and older callers. Runtime selection uses the registry.
@@ -120,9 +120,9 @@ def generate(dll, adapter_id=DEFAULT_ADAPTER_ID):
         legacy_native.mkdir(parents=True, exist_ok=True)
         (legacy_native / 'engine_compat_profile.h').write_text(header(profile), encoding='ascii')
         (engine_root / 'engine_compat_profile.json').write_text(
-            json.dumps(profile, indent=2) + '\\n', encoding='utf8')
+            json.dumps(profile, indent=2) + '\n', encoding='utf8')
         (engine_root / 'adapter_version.json').write_text(
-            json.dumps(version, indent=2) + '\\n', encoding='utf8')
+            json.dumps(version, indent=2) + '\n', encoding='utf8')
     print(f'Generated adapter {adapter_id} from its exact local reference DLL.')
     return spec, profile, build_dir, adapter_dir
 
