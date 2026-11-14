@@ -59,6 +59,7 @@ class ReleaseTests(unittest.TestCase):
             with zipfile.ZipFile(output) as archive:
                 manifest = json.loads(archive.read('fm-tactics-lab/SOURCE_MANIFEST.json'))
                 self.assertEqual(len(archive.namelist()), len(manifest) + 1)
+                self.assertIn('native/adapter_registry.json', manifest)
                 for name, expected in manifest.items():
                     self.assertEqual(hashlib.sha256(archive.read('fm-tactics-lab/' + name)).hexdigest(), expected)
                     self.assertFalse({'private', 'build', 'data', 'vendor', '__pycache__'} & set(Path(name).parts))
