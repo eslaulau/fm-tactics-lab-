@@ -184,6 +184,7 @@ def initialize(root):
         requested = os.environ.get('FM27_ENGINE_ADAPTER', '').strip()
         if registry is None:
             if requested and requested != 'auto':
+                close_leases()
                 return {**status, 'reason': 'adapter_registry_missing',
                         'message': '当前引擎目录没有适配器注册表，请先重新构建原生适配器。'}
             spec = None
@@ -202,6 +203,7 @@ def initialize(root):
                     profile_path = native / 'engine_compat_profile.json'
                     version_path = native / 'adapter_version.json'
             if not executable.is_file() or not profile_path.is_file():
+                close_leases()
                 return {
                     **status,
                     'reason': 'adapter_build_missing',
