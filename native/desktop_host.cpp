@@ -41,6 +41,7 @@ static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
 static bool desktop_find_activation=false;
+static bool desktop_use_private_desktop=true;
 static std::vector<HMODULE> desktop_platform_probe_modules;
 static unsigned char* native_base;
 static uint64_t input_cursor=0,input_reads=0;
@@ -1545,8 +1546,11 @@ static int child(bool run_match){
     AddVectoredExceptionHandler(0,observe);
     wchar_t desktop[256]={};DWORD needed=0;
     GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,desktop,sizeof(desktop),&needed);
-    fprintf(log_file,"{\"event\":\"simulator_started\",\"isolated_desktop\":%s,\"full_match_completed\":false,\"extracted_engine\":false}\n",wcsstr(desktop,L"FmEngineControl_")?"true":"false");fflush(log_file);
-    if(!wcsstr(desktop,L"FmEngineControl_"))return 80;
+    const bool is_private_desktop=wcsstr(desktop,L"FmEngineControl_")!=nullptr;
+    const bool desktop_mode_matches=desktop_use_private_desktop?is_private_desktop:!is_private_desktop;
+    fprintf(log_file,"{\"event\":\"simulator_started\",\"isolated_desktop\":%s,\"desktop_mode\":\"%s\",\"desktop_name\":\"%ls\",\"full_match_completed\":false,\"extracted_engine\":false}\n",
+        is_private_desktop?"true":"false",desktop_use_private_desktop?"private":"shared",desktop);fflush(log_file);
+    if(!desktop[0]||!desktop_mode_matches)return 80;
     wchar_t image[MAX_PATH];
     wcscpy_s(image,(desktop_game_root.empty()?bundle/L"game_plugin.dll":desktop_game_root/L"fm_Data/Plugins/x86_64/game_plugin.dll").c_str());
     if(!known_image(image)){fprintf(log_file,"{\"event\":\"unsupported_engine_compatibility\"}\n");fflush(log_file);return 99;}
@@ -1600,6 +1604,12 @@ int wmain(int argc,wchar_t** argv){
     wchar_t desktop_env[32768]={};
     if(GetEnvironmentVariableW(L"FM27_ENGINE_ROOT",desktop_env,32768))bundle=fs::path(desktop_env)/L"fm27_native";
     if(GetEnvironmentVariableW(L"FM27_GAME_ROOT",desktop_env,32768))desktop_game_root=desktop_env;
+    wchar_t desktop_mode[64]={};
+    if(GetEnvironmentVariableW(L"FM27_NATIVE_DESKTOP_MODE",desktop_mode,64)){
+        if(_wcsicmp(desktop_mode,L"shared")==0)desktop_use_private_desktop=false;
+        else if(_wcsicmp(desktop_mode,L"private")==0)desktop_use_private_desktop=true;
+        else{fputs("Invalid FM27_NATIVE_DESKTOP_MODE; use shared or private\n",stderr);return 78;}
+    }
     fixture=bundle/L"fixtures/match.pkm";output=bundle/L"last_match.jsonl";
     fs::path check_image;
     bool is_child=false;
@@ -1614,7 +1624,7 @@ int wmain(int argc,wchar_t** argv){
         else if(arg==L"--policy-audit")policy_audit=true;
         else if(arg==L"--find-activation")desktop_find_activation=true;
         else if(arg==L"--match"){}
-        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256] [--find-activation]\nRuns original native simulation on a private desktop. --find-activation performs a read-only 20 s scan around the activation gate and maps changed in-image addresses to bounded x64 runtime-function metadata. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
+        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256] [--find-activation]\nRuns original native simulation on the selected Windows desktop. FM27_NATIVE_DESKTOP_MODE=private creates an isolated desktop; shared inherits the launcher desktop. --find-activation performs a read-only 20 s scan around the activation gate. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
         else if((arg==L"--fixture"||arg==L"--output"||arg==L"--seed"||arg==L"--tick-step"||arg==L"--dump-input"||arg==L"--scenario-file")&&i+1<argc){
             auto value=argv[++i];
             if(arg==L"--fixture")fixture=fs::absolute(value);
@@ -1633,9 +1643,13 @@ int wmain(int argc,wchar_t** argv){
     if(!check_image.empty()){log_file=stdout;return known_image(check_image)?0:99;}
     if(!desktop_cancel_name.empty()){desktop_cancel_event=OpenEventW(SYNCHRONIZE|EVENT_MODIFY_STATE,FALSE,desktop_cancel_name.c_str());if(!desktop_cancel_event)return 181;}
     if(is_child){unsigned status=child(true);desktop_finish_and_exit(status);}
-    wchar_t desktop_name[96];swprintf_s(desktop_name,L"FmEngineControl_%lu",GetCurrentProcessId());
-    auto desktop=CreateDesktopW(desktop_name,nullptr,nullptr,0,GENERIC_ALL,nullptr);
-    if(!desktop){printf("desktop_create_error=%lu\n",GetLastError());return 83;}
+    wchar_t desktop_name[96]={};
+    HDESK desktop=nullptr;
+    if(desktop_use_private_desktop){
+        swprintf_s(desktop_name,L"FmEngineControl_%lu",GetCurrentProcessId());
+        desktop=CreateDesktopW(desktop_name,nullptr,nullptr,0,GENERIC_ALL,nullptr);
+        if(!desktop){printf("desktop_create_error=%lu\n",GetLastError());return 83;}
+    }
     auto quote=[](const std::wstring& s){std::wstring q=L"\"";size_t slashes=0;for(auto c:s){if(c==L'\\'){slashes++;continue;}if(c==L'\"')q.append(slashes*2+1,L'\\');else q.append(slashes,L'\\');slashes=0;q+=c;}q.append(slashes*2,L'\\');return q+L'\"';};
     std::wstring command=quote(executable)+L" --child --fixture "+quote(fixture.wstring())+L" --output "+quote(output.wstring())+L" --tick-step "+std::to_wstring(tick_step);
     if(!worker_manifest.empty())command+=L" --worker-manifest "+quote(worker_manifest.wstring());
@@ -1646,18 +1660,18 @@ int wmain(int argc,wchar_t** argv){
     if(!dump_input.empty())command+=L" --dump-input "+quote(dump_input.wstring());
     if(inspect_fixture_only)command+=L" --inspect-fixture";
     if(!scenario_file.empty())command+=L" --scenario-file "+quote(scenario_file.wstring());
-    STARTUPINFOW start={};start.cb=sizeof(start);start.lpDesktop=desktop_name;
+    STARTUPINFOW start={};start.cb=sizeof(start);if(desktop_use_private_desktop)start.lpDesktop=desktop_name;
     PROCESS_INFORMATION process={};
     HANDLE job=CreateJobObjectW(nullptr,nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits={};
     limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_ACTIVE_PROCESS|JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     limits.BasicLimitInformation.ActiveProcessLimit=1;
-    if(!job||!SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))){if(job)CloseHandle(job);CloseDesktop(desktop);return 101;}
+    if(!job||!SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))){if(job)CloseHandle(job);if(desktop)CloseDesktop(desktop);return 101;}
     if(!CreateProcessW(executable,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW|CREATE_SUSPENDED,nullptr,nullptr,&start,&process)){
-        printf("child_start_error=%lu\n",GetLastError());CloseDesktop(desktop);return 84;
+        printf("child_start_error=%lu\n",GetLastError());if(desktop)CloseDesktop(desktop);return 84;
     }
     if(!AssignProcessToJobObject(job,process.hProcess)){
-        auto error=GetLastError();TerminateProcess(process.hProcess,102);CloseHandle(process.hThread);CloseHandle(process.hProcess);CloseHandle(job);CloseDesktop(desktop);printf("process_isolation_error=%lu\n",error);return 102;
+        auto error=GetLastError();TerminateProcess(process.hProcess,102);CloseHandle(process.hThread);CloseHandle(process.hProcess);CloseHandle(job);if(desktop)CloseDesktop(desktop);printf("process_isolation_error=%lu\n",error);return 102;
     }
     ResumeThread(process.hThread);
     DWORD worker_wait=180000u;
@@ -1669,6 +1683,6 @@ int wmain(int argc,wchar_t** argv){
     if(WaitForSingleObject(process.hProcess,worker_wait)==WAIT_TIMEOUT){if(desktop_cancel_event)SetEvent(desktop_cancel_event);if(!desktop_cancel_event||WaitForSingleObject(process.hProcess,15000)==WAIT_TIMEOUT){printf("steam_cleanup_timeout_forced_termination=1\n");TerminateProcess(process.hProcess,85);WaitForSingleObject(process.hProcess,3000);}}
     DWORD code=0;GetExitCodeProcess(process.hProcess,&code);
     printf("native_match_exit=%lu\n",code);
-    CloseHandle(process.hThread);CloseHandle(process.hProcess);CloseHandle(job);CloseDesktop(desktop);
+    CloseHandle(process.hThread);CloseHandle(process.hProcess);CloseHandle(job);if(desktop)CloseDesktop(desktop);
     return (int)code;
 }

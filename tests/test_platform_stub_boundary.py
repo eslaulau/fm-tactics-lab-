@@ -295,5 +295,24 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn("validation.get('disposition') == 'blocked'", build)
 
 
+
+class NativeDesktopModeTests(unittest.TestCase):
+    def test_host_supports_shared_and_private_desktop_modes(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('FM27_NATIVE_DESKTOP_MODE', host)
+        self.assertIn('_wcsicmp(desktop_mode,L"shared")', host)
+        self.assertIn('_wcsicmp(desktop_mode,L"private")', host)
+        self.assertIn('desktop_use_private_desktop?is_private_desktop:!is_private_desktop', host)
+        self.assertIn('if(desktop_use_private_desktop){', host)
+        self.assertIn('if(desktop_use_private_desktop)start.lpDesktop=desktop_name;', host)
+        self.assertIn('if(desktop)CloseDesktop(desktop);', host)
+        self.assertIn('desktop_mode', host)
+
+    def test_fmtl_runner_defaults_to_shared_desktop_and_allows_private_override(self):
+        runner = RUNNER.read_text(encoding='utf-8')
+        self.assertIn("parser.add_argument('--desktop-mode', choices=('shared', 'private'), default='shared'", runner)
+        self.assertIn('FM27_NATIVE_DESKTOP_MODE=args.desktop_mode', runner)
+
+
 if __name__ == '__main__':
     unittest.main()
