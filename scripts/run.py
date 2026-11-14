@@ -66,7 +66,7 @@ def check_inputs(adapter='auto'):
         ))
     missing = [str(path.relative_to(ROOT)) for path in needed if not path.is_file()]
     if missing:
-        raise ValueError('Prepare private assets and build native first. Missing:\\n' + '\\n'.join(missing))
+        raise ValueError('Prepare private assets and build native first. Missing:\n' + '\n'.join(missing))
 
 
 def main():
