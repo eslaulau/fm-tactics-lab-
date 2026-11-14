@@ -62,16 +62,20 @@ def initialize(root):
              'shared/data/simatchshared.fmf':game/'shared/data/simatchshared.fmf'}
     for name, path in runtime['found'].items():
         files['libs/'+name] = path
+    for name, path in runtime['platform_stubs'].items():
+        files['platform-stubs/'+name] = path
     runtime_dirs = [str(path) for path in runtime['search_dirs']]
     runtime_paths = {name:str(path) for name,path in sorted(runtime['found'].items())}
     status={'policy':'graded-adapter-compatibility-v2','compatible':False,'can_simulate':False,
             'disposition':'blocked','selected_game_root':str(game.resolve()),
             'actual_dll_sha256':None,'resource_fingerprint':None,
             'runtime_search_dirs':runtime_dirs,'runtime_dlls':runtime_paths,
+            'platform_stubs':{name:str(path) for name,path in sorted(runtime['platform_stubs'].items())},
             'whole_file_sha_is_admission_gate':False,'whole_engine_behavior_equivalence_proven':False}
     try:
         missing=[name for name,path in files.items() if not path.is_file()]
         missing.extend('libs/'+name for name in runtime['missing'])
+        missing.extend('platform-stubs/'+name for name in runtime['missing_platform_stubs'])
         if missing:
             return {**status,'reason':'missing_resources','missing_files':missing,
                     'message':'请选择完整的游戏安装目录；缺少：'+', '.join(missing)}
