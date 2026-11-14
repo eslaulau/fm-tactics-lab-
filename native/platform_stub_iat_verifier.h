@@ -294,4 +294,126 @@ inline IatResult verify_imports(
     return make_result(IatError::none, -1, 0, 0, 0, observed[0], observed[1]);
 }
 
+
+inline IatResult verify_named_imports(
+    HMODULE imported_module, HMODULE expected_module,
+    const char* expected_name, std::size_t expected_count) {
+    if (!imported_module || !expected_module || !expected_name || !*expected_name)
+        return make_result(IatError::invalid_module);
+
+    auto image = reinterpret_cast<unsigned char*>(imported_module);
+    if (!module_range_readable(imported_module, image, sizeof(IMAGE_DOS_HEADER)))
+        return make_result(IatError::unreadable_dos_header);
+    auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+        dos->e_lfanew > 0x100000)
+        return make_result(IatError::invalid_dos_header);
+
+    const auto nt_offset = static_cast<std::size_t>(dos->e_lfanew);
+    if (!module_range_readable(imported_module, image + nt_offset, sizeof(IMAGE_NT_HEADERS64)))
+        return make_result(IatError::unreadable_nt_headers);
+    auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + nt_offset);
+    const std::size_t required_optional_size =
+        offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) +
+        (IMAGE_DIRECTORY_ENTRY_IMPORT + 1) * sizeof(IMAGE_DATA_DIRECTORY);
+    if (nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
+        nt->FileHeader.SizeOfOptionalHeader < required_optional_size ||
+        nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_IMPORT)
+        return make_result(IatError::invalid_nt_headers);
+
+    const std::size_t image_size = nt->OptionalHeader.SizeOfImage;
+    if (image_size < nt_offset + sizeof(IMAGE_NT_HEADERS64))
+        return make_result(IatError::invalid_nt_headers);
+    const auto directory =
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!directory.VirtualAddress ||
+        directory.Size < sizeof(IMAGE_IMPORT_DESCRIPTOR) ||
+        directory.VirtualAddress >= image_size ||
+        directory.Size > image_size - directory.VirtualAddress)
+        return make_result(IatError::invalid_import_directory);
+    if (!module_range_readable(
+            imported_module, image + directory.VirtualAddress, directory.Size))
+        return make_result(IatError::unreadable_import_descriptors);
+
+    const auto descriptors =
+        reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(image + directory.VirtualAddress);
+    const std::size_t descriptor_count =
+        (std::min)(directory.Size / sizeof(IMAGE_IMPORT_DESCRIPTOR), std::size_t(4096));
+    bool seen = false;
+    bool ended = false;
+    std::size_t observed = 0;
+
+    for (std::size_t d = 0; d < descriptor_count; ++d) {
+        const auto& descriptor = descriptors[d];
+        const bool zero_descriptor =
+            !descriptor.OriginalFirstThunk && !descriptor.TimeDateStamp &&
+            !descriptor.ForwarderChain && !descriptor.Name && !descriptor.FirstThunk;
+        if (zero_descriptor) {
+            ended = true;
+            break;
+        }
+        if (!descriptor.Name)
+            return make_result(IatError::invalid_import_descriptor);
+        char imported_name[260] = {};
+        if (!image_string(imported_module, image, image_size,
+                          descriptor.Name, imported_name, sizeof(imported_name)))
+            return make_result(IatError::invalid_import_name);
+        if (!ascii_equal_ci(imported_name, expected_name)) continue;
+        if (seen)
+            return make_result(IatError::duplicate_descriptor, 0, d,
+                               expected_count, observed);
+        seen = true;
+        if (!descriptor.FirstThunk)
+            return make_result(IatError::invalid_thunk_table);
+        const std::uint32_t lookup_rva =
+            descriptor.OriginalFirstThunk ? descriptor.OriginalFirstThunk : descriptor.FirstThunk;
+        if (lookup_rva >= image_size || descriptor.FirstThunk >= image_size)
+            return make_result(IatError::invalid_thunk_table);
+        const std::size_t max_lookup =
+            (image_size - lookup_rva) / sizeof(IMAGE_THUNK_DATA64);
+        const std::size_t max_iat =
+            (image_size - descriptor.FirstThunk) / sizeof(IMAGE_THUNK_DATA64);
+        const std::size_t max_thunks =
+            (std::min)((std::min)(max_lookup, max_iat), std::size_t(4096));
+        const auto lookup =
+            reinterpret_cast<const IMAGE_THUNK_DATA64*>(image + lookup_rva);
+        const auto iat =
+            reinterpret_cast<const IMAGE_THUNK_DATA64*>(image + descriptor.FirstThunk);
+        bool thunk_ended = false;
+        std::size_t count = 0;
+        for (; count < max_thunks; ++count) {
+            if (!module_range_readable(imported_module, lookup + count, sizeof(*lookup)) ||
+                !module_range_readable(imported_module, iat + count, sizeof(*iat)))
+                return make_result(IatError::invalid_thunk_table, 0, count,
+                                   expected_count, count);
+            if (!lookup[count].u1.AddressOfData) {
+                thunk_ended = true;
+                break;
+            }
+            const auto address = reinterpret_cast<const void*>(
+                static_cast<std::uintptr_t>(iat[count].u1.Function));
+            if (!module_function_address(expected_module, address))
+                return make_result(IatError::iat_target_mismatch, 0, count,
+                                   expected_count, count + 1);
+        }
+        if (!thunk_ended)
+            return make_result(IatError::invalid_thunk_table, 0, count,
+                               expected_count, count);
+        observed = count;
+        if (observed != expected_count)
+            return make_result(IatError::import_count_mismatch, 0, d,
+                               expected_count, observed);
+    }
+
+    if (!ended)
+        return make_result(IatError::missing_descriptor_terminator);
+    if (!seen)
+        return make_result(IatError::missing_import_descriptor, 0, 0,
+                           expected_count, 0);
+    return make_result(IatError::none, -1, 0, expected_count,
+                       observed, observed, 0);
+}
+
 } // namespace fm27_platform_boundary
