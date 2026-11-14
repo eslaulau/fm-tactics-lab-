@@ -9,6 +9,7 @@ HOST = ROOT / 'native' / 'desktop_host.cpp'
 PROFILE = ROOT / 'native' / 'profile_metadata.json'
 RUNNER = ROOT / 'scripts' / 'run.py'
 VERIFIER = ROOT / 'scripts' / 'verify_platform_stub_exports.py'
+BUILD_NATIVE = ROOT / 'scripts' / 'build_native.py'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -130,6 +131,12 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('actual_names != expected', verifier)
         self.assertIn("imported_dlls != ['kernel32.dll']", verifier)
         self.assertIn('len(set(actual[\'named_function_rvas\'])) != 1', verifier)
+
+    def test_native_builder_checks_the_real_reference_and_built_stub_pes(self):
+        build = BUILD_NATIVE.read_text(encoding='utf-8')
+        self.assertIn("'--check-image'", build)
+        self.assertIn('verify_platform_stub_exports.py', build)
+        self.assertIn("validation.get('disposition') == 'blocked'", build)
 
 
 if __name__ == '__main__':
