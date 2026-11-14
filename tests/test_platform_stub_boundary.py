@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 import unittest
@@ -5,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'native' / 'platform_dependency_stub.cpp'
 HOST = ROOT / 'native' / 'desktop_host.cpp'
+PROFILE = ROOT / 'native' / 'profile_metadata.json'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -62,6 +64,23 @@ class PlatformStubBoundaryTests(unittest.TestCase):
             r'/EXPORT:([A-Za-z0-9_]+)=PlatformDependencyUnexpectedCall',
             self.source.split('#elif defined(BUILD_PLAYFAB_STUB)')[0]))
         self.assertEqual(exports, PARTY_EXPORTS)
+
+    def test_stub_exports_match_the_checked_in_engine_import_manifest(self):
+        profile = json.loads(PROFILE.read_text(encoding='utf-8'))
+        imports = profile['imports']
+        expected = {
+            'partywin.dll': {
+                row['name'] for row in imports
+                if row['dll'].lower() == 'partywin.dll'
+            },
+            'playfabmultiplayerwin.dll': {
+                row['name'] for row in imports
+                if row['dll'].lower() == 'playfabmultiplayerwin.dll'
+            },
+        }
+        self.assertEqual(expected['partywin.dll'], PARTY_EXPORTS)
+        self.assertEqual(expected['playfabmultiplayerwin.dll'], PLAYFAB_EXPORTS)
+        self.assertEqual(len(PARTY_EXPORTS) + len(PLAYFAB_EXPORTS), 39)
 
     def test_exact_playfab_import_exports_are_present(self):
         section = self.source.split('#elif defined(BUILD_PLAYFAB_STUB)', 1)[1]
