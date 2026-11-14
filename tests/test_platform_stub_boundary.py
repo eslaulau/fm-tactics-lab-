@@ -198,7 +198,7 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('word_count=window_size/sizeof(uint32_t)', scanner)
         self.assertIn('words.reserve(word_count)', scanner)
         self.assertIn('candidate.first!=candidate.disk_value', scanner)
-        self.assertIn('candidate.changes||candidate.first!=candidate.disk_value', scanner)
+        self.assertIn('candidate.changes||candidate.offset==gate_offset', scanner)
         self.assertIn('std::sort(report.begin(),report.end()', scanner)
         self.assertIn('distance_to_gate', scanner)
         self.assertIn('disk_value', scanner)
@@ -209,7 +209,7 @@ class PlatformStubHostTests(unittest.TestCase):
         scanner = self.host.split('static int scan_activation', 1)[1].split('static int child', 1)[0]
         self.assertIn('first_change_ms', scanner)
         self.assertIn('last_change_ms', scanner)
-        self.assertIn('zero_ms,-1', scanner)
+        self.assertIn('current,current,-1,-1,-1,0', scanner)
         self.assertIn('candidate.zero_ms<0', scanner)
         self.assertIn('VirtualQuery(base+rva', scanner)
         self.assertIn('memory_protect', scanner)
