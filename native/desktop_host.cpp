@@ -16,6 +16,7 @@
 #include <mutex>
 #include <map>
 #include <array>
+#include <system_error>
 static std::recursive_mutex worker_log_lock;
 #include "fm27_tactic_bindings.h"
 #pragma comment(lib,"bcrypt.lib")
@@ -25,6 +26,7 @@ static std::recursive_mutex worker_log_lock;
 namespace fs=std::filesystem;
 static fs::path bundle,fixture,output;
 static fs::path desktop_game_root;
+static std::vector<DLL_DIRECTORY_COOKIE> desktop_dll_directory_cookies;
 static fs::path dump_input;
 static fs::path scenario_file;
 static bool seed_override=false;
@@ -45,6 +47,86 @@ static void* at(uintptr_t rva){
         fflush(log_file);desktop_finish_and_exit(251);
     }
     return native_base+rva;
+}
+
+static const char* desktop_runtime_dll_names[] = {
+    "icuuc65.dll", "icuin65.dll", "icudt65.dll",
+    "EOSSDK-Win64-Shipping.dll", "PartyWin.dll",
+    "PlayFabMultiplayerWin.dll", "steam_api64.dll"
+};
+
+static void desktop_append_runtime_dir(std::vector<fs::path>& dirs, const fs::path& candidate){
+    std::error_code error;
+    auto absolute=fs::absolute(candidate,error);
+    if(error)absolute=candidate;
+    absolute=absolute.lexically_normal();
+    for(const auto& existing:dirs)if(existing==absolute)return;
+    dirs.push_back(absolute);
+}
+
+static std::vector<fs::path> desktop_runtime_search_dirs(){
+    std::vector<fs::path> dirs;
+    if(!desktop_game_root.empty()){
+        desktop_append_runtime_dir(dirs,desktop_game_root/L"fm_Data/Plugins/x86_64");
+        desktop_append_runtime_dir(dirs,desktop_game_root/L"fm_Data/Plugins");
+        desktop_append_runtime_dir(dirs,desktop_game_root/L"fm_Data");
+        desktop_append_runtime_dir(dirs,desktop_game_root);
+    }
+    desktop_append_runtime_dir(dirs,bundle/L"libs");
+    desktop_append_runtime_dir(dirs,bundle);
+    return dirs;
+}
+
+static bool desktop_prepare_runtime_dll_search(){
+    auto dirs=desktop_runtime_search_dirs();
+    for(const auto* name:desktop_runtime_dll_names){
+        std::vector<fs::path> matches;
+        for(const auto& directory:dirs){
+            auto candidate=directory/fs::path(name);
+            std::error_code error;
+            if(fs::is_regular_file(candidate,error)&&!error)matches.push_back(candidate);
+        }
+        if(matches.empty()){
+            fprintf(log_file,"{\"event\":\"runtime_dependency_missing\",\"name\":\"%s\"}\n",name);fflush(log_file);
+            return false;
+        }
+        if(matches.size()>1){
+            for(size_t i=1;i<matches.size();i++){
+                std::error_code error;
+                if(!fs::equivalent(matches.front(),matches[i],error)||error){
+                    fprintf(log_file,"{\"event\":\"runtime_dependency_ambiguous\",\"name\":\"%s\",\"copies\":%zu}\n",name,matches.size());fflush(log_file);
+                    return false;
+                }
+            }
+        }
+    }
+    if(!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS)){
+        fprintf(log_file,"{\"event\":\"runtime_dependency_policy_failed\",\"error\":%lu}\n",GetLastError());fflush(log_file);
+        return false;
+    }
+    size_t added=0;
+    for(size_t index=0;index<dirs.size();index++){
+        bool contains_runtime=false;
+        for(const auto* name:desktop_runtime_dll_names){
+            std::error_code error;
+            if(fs::is_regular_file(dirs[index]/fs::path(name),error)&&!error){contains_runtime=true;break;}
+        }
+        if(!contains_runtime)continue;
+        auto cookie=AddDllDirectory(dirs[index].c_str());
+        if(!cookie){
+            fprintf(log_file,"{\"event\":\"runtime_dependency_search_dir_failed\",\"index\":%zu,\"error\":%lu}\n",index,GetLastError());fflush(log_file);
+            return false;
+        }
+        desktop_dll_directory_cookies.push_back(cookie);
+        added++;
+        fprintf(log_file,"{\"event\":\"runtime_dependency_search_dir_added\",\"index\":%zu}\n",index);fflush(log_file);
+    }
+    if(!added){
+        fputs("{\"event\":\"runtime_dependency_search_dirs_empty\"}\n",log_file);fflush(log_file);
+        return false;
+    }
+    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu}\n",added,sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]));fflush(log_file);
+    return true;
 }
 static int audit_policies(){
     std::vector<uint32_t> positions;
@@ -970,8 +1052,7 @@ static int child(bool run_match){
     GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,desktop,sizeof(desktop),&needed);
     fprintf(log_file,"{\"event\":\"simulator_started\",\"isolated_desktop\":%s,\"full_match_completed\":false,\"extracted_engine\":false}\n",wcsstr(desktop,L"FmEngineControl_")?"true":"false");fflush(log_file);
     if(!wcsstr(desktop,L"FmEngineControl_"))return 80;
-    wchar_t libs[MAX_PATH],image[MAX_PATH];
-    wcscpy_s(libs,(desktop_game_root.empty()?bundle/L"libs":desktop_game_root/L"fm_Data/Plugins/x86_64").c_str());
+    wchar_t image[MAX_PATH];
     wcscpy_s(image,(desktop_game_root.empty()?bundle/L"game_plugin.dll":desktop_game_root/L"fm_Data/Plugins/x86_64/game_plugin.dll").c_str());
     if(!known_image(image)){fprintf(log_file,"{\"event\":\"unsupported_engine_compatibility\"}\n");fflush(log_file);return 99;}
     SetEnvironmentVariableW(L"SteamNoOverlayUI",L"1");
@@ -979,8 +1060,7 @@ static int child(bool run_match){
     // Installation app manifest metadata, not a fabricated ownership response.
     SetEnvironmentVariableW(L"SteamAppId",L"4530370");
     SetEnvironmentVariableW(L"SteamGameId",L"4530370");
-    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
-    AddDllDirectory(libs);
+    if(!desktop_prepare_runtime_dll_search())return 81;
     fprintf(log_file,"{\"event\":\"windows_load_started\"}\n");fflush(log_file);
     auto module=LoadLibraryExW(image,nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
     fprintf(log_file,"{\"event\":\"windows_load_returned\",\"success\":%s,\"error\":%lu}\n",module?"true":"false",GetLastError());fflush(log_file);
