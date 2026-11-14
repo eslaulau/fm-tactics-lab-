@@ -1286,10 +1286,14 @@ static int worker_loop(void* object){
 static int scan_activation(HMODULE module,const fs::path& path){
     // Read-only diagnostic: monitor every aligned DWORD in the gate's nearby
     // file-backed section window, not only words whose on-disk value is 1.
-    // This captures both loader-time differences and post-load state changes.
+    // Keep loader-time image differences separate from post-snapshot mutations.
     // Never writes engine memory or forces the activation gate.
     constexpr uint32_t configured_gate_rva=0x1718f818;
     constexpr uint32_t scan_radius=0x100000; // 1 MiB on either side of the gate.
+    constexpr DWORD fast_sample_interval_ms=25;
+    constexpr DWORD fast_sample_window_ms=500;
+    constexpr DWORD slow_sample_interval_ms=100;
+    constexpr DWORD total_sample_window_ms=20000;
     auto base=reinterpret_cast<unsigned char*>(module);
     auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     if(dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0){
@@ -1333,13 +1337,25 @@ static int scan_activation(HMODULE module,const fs::path& path){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"read_image_failed\"}\n",log_file);fflush(log_file);return 121;
     }
     const uint32_t word_count=window_size/sizeof(uint32_t);
-    struct Candidate{uint32_t offset;uint32_t disk_value;uint32_t first;uint32_t last;int zero_ms;unsigned changes;};
+    struct Candidate{
+        uint32_t offset;
+        uint32_t disk_value;
+        uint32_t first;
+        uint32_t last;
+        int first_change_ms;
+        int last_change_ms;
+        int zero_ms;
+        unsigned changes;
+    };
     std::vector<unsigned char> memory(window_size);
     SIZE_T read=0;
     if(!ReadProcessMemory(GetCurrentProcess(),base+window_start,memory.data(),memory.size(),&read)||read!=memory.size()){
         fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_read_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
             window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
     }
+    // Preserve the first post-LoadLibrary snapshot so final values can be
+    // compared without confusing loader relocations with later mutations.
+    const std::vector<unsigned char> loaded_memory=memory;
     std::vector<Candidate> words;
     words.reserve(word_count);
     unsigned disk_ones=0,loaded_image_differences=0;
@@ -1350,75 +1366,106 @@ static int scan_activation(HMODULE module,const fs::path& path){
         memcpy(&current,memory.data()+offset,sizeof(current));
         if(disk_value==1)disk_ones++;
         if(current!=disk_value)loaded_image_differences++;
-        words.push_back({offset,disk_value,current,current,current==0?0:-1,0});
+        // A zero at the initial snapshot is not a zero transition. All event
+        // timestamps therefore start at -1 and are set only after a mutation.
+        words.push_back({offset,disk_value,current,current,-1,-1,-1,0});
     }
     std::array<char,9> section_name{};
     memcpy(section_name.data(),gate_section->Name,8);
     const uint32_t gate_offset=configured_gate_rva-window_start;
     auto gate=reinterpret_cast<volatile uint32_t*>(base+configured_gate_rva);
     auto started=GetTickCount64();
-    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section\":\"%s\",\"section_rva\":\"0x%x\",\"section_raw_size\":%u,\"window_rva\":\"0x%x\",\"window_size\":%u,\"scan_words\":%u,\"disk_ones\":%u,\"loaded_image_differences\":%u,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000,\"scan_radius_each_side\":%u}\n",
+    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section\":\"%s\",\"section_rva\":\"0x%x\",\"section_raw_size\":%u,\"window_rva\":\"0x%x\",\"window_size\":%u,\"scan_words\":%u,\"disk_ones\":%u,\"loaded_image_differences\":%u,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":%u,\"fast_sample_interval_ms\":%u,\"fast_sample_window_ms\":%u,\"slow_sample_interval_ms\":%u}\n",
         section_name.data(),section_start,gate_section->SizeOfRawData,window_start,window_size,
-        word_count,disk_ones,loaded_image_differences,configured_gate_rva,*gate,scan_radius);fflush(log_file);
+        word_count,disk_ones,loaded_image_differences,configured_gate_rva,*gate,total_sample_window_ms,
+        fast_sample_interval_ms,fast_sample_window_ms,slow_sample_interval_ms);fflush(log_file);
     auto poll=[&](){
+        const int elapsed=static_cast<int>(GetTickCount64()-started);
         for(auto& candidate:words){
             uint32_t value=0;memcpy(&value,memory.data()+candidate.offset,sizeof(value));
             if(value!=candidate.last){
                 candidate.changes++;
-                if(!value&&candidate.zero_ms<0)candidate.zero_ms=static_cast<int>(GetTickCount64()-started);
+                if(candidate.first_change_ms<0)candidate.first_change_ms=elapsed;
+                candidate.last_change_ms=elapsed;
+                if(!value&&candidate.zero_ms<0)candidate.zero_ms=elapsed;
                 candidate.last=value;
             }
         }
     };
-    while(GetTickCount64()-started<20000){
-        Sleep(100);
+    unsigned samples=0;
+    while(GetTickCount64()-started<total_sample_window_ms){
+        const auto elapsed=GetTickCount64()-started;
+        const DWORD interval=elapsed<fast_sample_window_ms?fast_sample_interval_ms:slow_sample_interval_ms;
+        Sleep(interval);
         read=0;
         if(!ReadProcessMemory(GetCurrentProcess(),base+window_start,memory.data(),memory.size(),&read)||read!=memory.size()){
             fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_resample_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
                 window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
         }
         poll();
+        samples++;
     }
     unsigned turned_zero=0,already_zero=0,changed=0,loaded_diff=0;
     std::vector<size_t> report;
-    report.reserve(words.size());
+    report.reserve(16);
     for(size_t i=0;i<words.size();i++){
         const auto& candidate=words[i];
         if(candidate.disk_value==1&&candidate.first==0)already_zero++;
         if(candidate.first!=0&&candidate.last==0)turned_zero++;
         if(candidate.changes)changed++;
         if(candidate.first!=candidate.disk_value)loaded_diff++;
-        if(candidate.changes||candidate.first!=candidate.disk_value||candidate.offset==gate_offset)
-            report.push_back(i);
+        // Report only real post-snapshot mutations plus the configured gate.
+        // Loader relocations are summarized separately, not mixed into this list.
+        if(candidate.changes||candidate.offset==gate_offset)report.push_back(i);
     }
     std::sort(report.begin(),report.end(),[&](size_t left,size_t right){
         const auto& a=words[left];const auto& b=words[right];
         const bool a_gate=a.offset==gate_offset,b_gate=b.offset==gate_offset;
         if(a_gate!=b_gate)return a_gate;
-        const bool a_changed=a.changes!=0,b_changed=b.changes!=0;
-        if(a_changed!=b_changed)return a_changed;
         const bool a_zero=a.first!=0&&a.last==0,b_zero=b.first!=0&&b.last==0;
         if(a_zero!=b_zero)return a_zero;
-        const bool a_load_diff=a.first!=a.disk_value,b_load_diff=b.first!=b.disk_value;
-        if(a_load_diff!=b_load_diff)return a_load_diff;
+        if(a.first_change_ms!=b.first_change_ms)return a.first_change_ms<b.first_change_ms;
         const uint32_t a_rva=window_start+a.offset,b_rva=window_start+b.offset;
         const uint32_t a_distance=a_rva>configured_gate_rva?a_rva-configured_gate_rva:configured_gate_rva-a_rva;
         const uint32_t b_distance=b_rva>configured_gate_rva?b_rva-configured_gate_rva:configured_gate_rva-b_rva;
         return a_distance<b_distance;
     });
-    const unsigned candidates_reported=static_cast<unsigned>(std::min<size_t>(report.size(),200));
+    const unsigned candidates_reported=static_cast<unsigned>(std::min<size_t>(report.size(),256));
     for(unsigned listed=0;listed<candidates_reported;listed++){
         const auto& candidate=words[report[listed]];
         const uint32_t rva=window_start+candidate.offset;
         const uint32_t distance=rva>configured_gate_rva?rva-configured_gate_rva:configured_gate_rva-rva;
+        const uint32_t pair_offset=candidate.offset&~7u;
+        uint64_t disk_qword=0,loaded_qword=0,final_qword=0;
+        if(pair_offset+sizeof(uint64_t)<=window_size){
+            memcpy(&disk_qword,disk.data()+pair_offset,sizeof(disk_qword));
+            memcpy(&loaded_qword,loaded_memory.data()+pair_offset,sizeof(loaded_qword));
+            memcpy(&final_qword,memory.data()+pair_offset,sizeof(final_qword));
+        }
+        MEMORY_BASIC_INFORMATION region={};
+        const SIZE_T queried=VirtualQuery(base+rva,&region,sizeof(region));
+        const uintptr_t image_base=reinterpret_cast<uintptr_t>(base);
+        const uintptr_t region_base=reinterpret_cast<uintptr_t>(region.BaseAddress);
+        const uintptr_t allocation_base=reinterpret_cast<uintptr_t>(region.AllocationBase);
+        const unsigned long long region_base_rva=queried&&region_base>=image_base?
+            static_cast<unsigned long long>(region_base-image_base):0;
+        const unsigned long long allocation_base_rva=queried&&allocation_base>=image_base?
+            static_cast<unsigned long long>(allocation_base-image_base):0;
         char context[65]={};
         for(unsigned i=0;i<32&&candidate.offset+i<disk.size();i++)
             sprintf_s(context+2*i,3,"%02x",disk[candidate.offset+i]);
-        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"distance_to_gate\":%u,\"disk_value\":%u,\"at_load\":%u,\"final\":%u,\"zero_ms\":%d,\"changes\":%u,\"disk\":\"%s\"}\n",
-            rva,distance,candidate.disk_value,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
+        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"distance_to_gate\":%u,\"disk_value\":%u,\"at_load\":%u,\"final\":%u,\"first_change_ms\":%d,\"last_change_ms\":%d,\"zero_ms\":%d,\"changes\":%u,\"loaded_image_difference\":%s,\"qword_rva\":\"0x%x\",\"disk_qword\":\"0x%016llx\",\"at_load_qword\":\"0x%016llx\",\"final_qword\":\"0x%016llx\",\"virtual_query_ok\":%s,\"region_base_rva\":\"0x%llx\",\"allocation_base_rva\":\"0x%llx\",\"region_size\":%llu,\"memory_state\":\"0x%lx\",\"memory_protect\":\"0x%lx\",\"memory_type\":\"0x%lx\",\"disk\":\"%s\"}\n",
+            rva,distance,candidate.disk_value,candidate.first,candidate.last,candidate.first_change_ms,
+            candidate.last_change_ms,candidate.zero_ms,candidate.changes,
+            candidate.first!=candidate.disk_value?"true":"false",
+            window_start+pair_offset,static_cast<unsigned long long>(disk_qword),
+            static_cast<unsigned long long>(loaded_qword),static_cast<unsigned long long>(final_qword),
+            queried?"true":"false",region_base_rva,allocation_base_rva,
+            queried?static_cast<unsigned long long>(region.RegionSize):0ULL,
+            queried?region.State:0UL,queried?region.Protect:0UL,queried?region.Type:0UL,context);
     }
-    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"section\":\"%s\",\"configured_gate_word\":%u,\"scanned_words\":%u,\"loaded_image_differences\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_reported\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
-        section_name.data(),*gate,word_count,loaded_diff,turned_zero,already_zero,changed,candidates_reported,
+    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"section\":\"%s\",\"configured_gate_word\":%u,\"scanned_words\":%u,\"samples\":%u,\"loaded_image_differences\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_reported\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
+        section_name.data(),*gate,word_count,samples,loaded_diff,turned_zero,already_zero,changed,candidates_reported,
         static_cast<unsigned long long>(GetTickCount64()-started));fflush(log_file);
     return 0;
 }
