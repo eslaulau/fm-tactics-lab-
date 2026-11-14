@@ -54,7 +54,8 @@
 extern "C" __declspec(noreturn) void __cdecl PlatformDependencyUnexpectedCall(void) {
     static const char event[] =
         "{\"event\":\"platform_stub_unexpected_call\",\"module\":\"" STUB_MODULE_NAME "\"}\r\n";
-    wchar_t log_path[32768] = {};
+    wchar_t log_path[1024];
+    log_path[0] = L'\0';
     DWORD length = GetEnvironmentVariableW(L"FM27_PLATFORM_STUB_LOG", log_path,
                                            static_cast<DWORD>(sizeof(log_path) / sizeof(log_path[0])));
     if (length && length < sizeof(log_path) / sizeof(log_path[0])) {
@@ -75,6 +76,6 @@ extern "C" __declspec(noreturn) void __cdecl PlatformDependencyUnexpectedCall(vo
     }
 }
 
-BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
+extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
     return TRUE;
 }
