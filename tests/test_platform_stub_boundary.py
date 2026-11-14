@@ -334,6 +334,19 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('unhandled_exception', host)
         self.assertIn('EXCEPTION_CONTINUE_SEARCH', host)
 
+    def test_host_identifies_process_owning_steamapi_error_windows_without_modifying_them(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('EnumWindows', host)
+        self.assertIn('EnumChildWindows', host)
+        self.assertIn('QueryFullProcessImageNameW', host)
+        self.assertIn('steam_error_window_observed', host)
+        self.assertIn('steam_error_window_scan_completed', host)
+        self.assertIn('desktop_scan_steamapi_windows("after_windows_load")', host)
+        self.assertIn('desktop_scan_steamapi_windows("activation_gate_sample")', host)
+        self.assertIn('desktop_scan_steamapi_windows("activation_timeout")', host)
+        self.assertNotIn('PostMessageW', host)
+        self.assertNotIn('SendMessageW', host)
+
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')
         self.assertIn('std::recursive_mutex worker_log_lock', host)
