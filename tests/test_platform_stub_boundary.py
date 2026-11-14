@@ -287,12 +287,15 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn("imported_dlls != ['kernel32.dll']", verifier)
         self.assertIn('len(set(actual[\'named_function_rvas\'])) != 1', verifier)
 
-    def test_native_builder_checks_the_real_reference_and_built_stub_pes(self):
+    def test_native_builder_checks_the_registered_reference_before_publishing_adapter(self):
         build = BUILD_NATIVE.read_text(encoding='utf-8')
         self.assertIn("'--check-image'", build)
+        self.assertIn("validation.get('compatible')", build)
+        self.assertIn("not validation.get('compatible')", build)
+        self.assertIn("adapter_spec(args.adapter)", build)
+        self.assertIn("registry['default_adapter']", build)
         self.assertIn('verify_platform_stub_exports.py', build)
         self.assertIn('build_platform_probe_stubs.py', build)
-        self.assertIn("validation.get('disposition') == 'blocked'", build)
 
 
 
