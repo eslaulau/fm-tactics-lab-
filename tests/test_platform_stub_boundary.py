@@ -118,6 +118,8 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('IatError::duplicate_descriptor', verifier)
         self.assertIn('IatError::iat_target_mismatch', verifier)
         self.assertIn('IatError::missing_descriptor_terminator', verifier)
+        self.assertNotIn('module_range_readable(imported_module, image, image_size)', verifier)
+        self.assertIn('Every structure and thunk we actually read is checked separately', verifier)
 
 
     def test_windows_smoke_executes_the_same_iat_verifier_as_the_host(self):

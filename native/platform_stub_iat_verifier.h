@@ -174,6 +174,9 @@ inline IatResult verify_imports(
         return make_result(IatError::invalid_nt_headers);
 
     const std::size_t image_size = nt->OptionalHeader.SizeOfImage;
+    // Do not probe the entire SizeOfImage range: PE images may contain
+    // reserved padding or inaccessible gaps between mapped sections. Every
+    // structure and thunk we actually read is checked separately below.
     if (image_size < nt_offset + sizeof(IMAGE_NT_HEADERS64))
         return make_result(IatError::invalid_nt_headers);
 

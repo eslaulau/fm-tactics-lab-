@@ -51,7 +51,7 @@ initializer call at RVA 0x9FA910, together with its return value, duration and
 thread ID. The initializer is retained unchanged; the event name deliberately
 does not label it as a Steam/EOS initializer.
 
-The shared import-table verifier checks the mapped module headers, import descriptor terminator, unique PartyWin/PlayFab descriptors, thunk-table bounds, exact 20/19 counts, and each executable IAT address's owning module. The import-table verification runs immediately after loading game_plugin.dll,
+The shared import-table verifier checks the mapped module headers, import descriptor terminator, unique PartyWin/PlayFab descriptors, thunk-table bounds, exact 20/19 counts, and each executable IAT address's owning module. It checks only the PE regions it reads rather than assuming the entire `SizeOfImage` range is uniformly readable. The import-table verification runs immediately after loading game_plugin.dll,
 before native activation or match setup. Any count mismatch, unresolved import,
 or IAT address outside the expected stub module fails closed with a diagnostic
 exit code.
