@@ -25,7 +25,7 @@ static char* append_hex(char* out, uintptr_t value) {
 }
 
 static void platform_probe_fail(const char* api) {
-    char event[2048];
+    char event[1536];
     char* cursor = event;
     cursor = append_text(cursor,
         "{\"event\":\"platform_probe_unexpected_call\",\"module\":\"");
@@ -34,8 +34,8 @@ static void platform_probe_fail(const char* api) {
     cursor = append_text(cursor, api);
     cursor = append_text(cursor, "\",\"call_stack\":[");
 
-    void* frames[16] = {};
-    const USHORT frame_count = CaptureStackBackTrace(1, 16, frames, nullptr);
+    void* frames[12];
+    const USHORT frame_count = CaptureStackBackTrace(1, 12, frames, nullptr);
     const uintptr_t engine = reinterpret_cast<uintptr_t>(
         GetModuleHandleW(L"game_plugin.dll"));
     uintptr_t engine_size = 0;
@@ -67,7 +67,8 @@ static void platform_probe_fail(const char* api) {
     const DWORD event_size = static_cast<DWORD>(cursor - event);
 
     OutputDebugStringA(event);
-    wchar_t log_path[1024] = {};
+    wchar_t log_path[512];
+    log_path[0] = L'\\0';
     const DWORD length = GetEnvironmentVariableW(
         L"FM27_PLATFORM_STUB_LOG", log_path,
         static_cast<DWORD>(sizeof(log_path) / sizeof(log_path[0])));
