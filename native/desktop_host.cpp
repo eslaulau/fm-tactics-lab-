@@ -1170,8 +1170,8 @@ static void desktop_log_exception_context(EXCEPTION_POINTERS* p,const char* kind
     auto context_address=p->ContextRecord?p->ContextRecord->Rip:0;
     HMODULE address_module=nullptr,context_module=nullptr;
     wchar_t address_path[MAX_PATH]={},context_path[MAX_PATH]={};
-    if(address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(address),&address_module);
-    if(context_address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(context_address),&context_module);
+    if(address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(address),&address_module);
+    if(context_address)GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(context_address),&context_module);
     if(address_module)GetModuleFileNameW(address_module,address_path,MAX_PATH);
     if(context_module)GetModuleFileNameW(context_module,context_path,MAX_PATH);
     const wchar_t* address_name=wcsrchr(address_path,L'\\');address_name=address_name?address_name+1:address_path;
