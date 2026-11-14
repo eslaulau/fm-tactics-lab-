@@ -8,6 +8,11 @@ import os
 from pathlib import Path
 import subprocess
 
+try:
+    from .runtime_layout import resolve_runtime_dlls
+except ImportError:
+    from runtime_layout import resolve_runtime_dlls
+
 LEASES = []
 
 
@@ -48,23 +53,35 @@ def initialize(root):
     os.environ.pop('FM27_EXPECTED_DLL_SHA256', None)
     native = root / 'fm27_native'
     game = Path(os.environ['FM27_GAME_ROOT']) if os.environ.get('FM27_GAME_ROOT') else native
-    plugins = game / 'fm_Data/Plugins/x86_64' if os.environ.get('FM27_GAME_ROOT') else native/'libs'
-    dll = plugins/'game_plugin.dll' if os.environ.get('FM27_GAME_ROOT') else native/'game_plugin.dll'
+    game_root = Path(os.environ['FM27_GAME_ROOT']) if os.environ.get('FM27_GAME_ROOT') else None
+    game = game_root if game_root is not None else native
+    plugins = game / 'fm_Data/Plugins/x86_64' if game_root is not None else native/'libs'
+    dll = plugins/'game_plugin.dll' if game_root is not None else native/'game_plugin.dll'
+    runtime = resolve_runtime_dlls(game_root, native)
     files = {'game_plugin.dll':dll, 'icudt65l.dat':game/'icudt65l.dat',
              'shared/data/simatch.fmf':game/'shared/data/simatch.fmf',
              'shared/data/simatchshared.fmf':game/'shared/data/simatchshared.fmf'}
-    for name in ['icuuc65.dll','icuin65.dll','icudt65.dll','EOSSDK-Win64-Shipping.dll',
-                 'PartyWin.dll','PlayFabMultiplayerWin.dll','steam_api64.dll']:
-        files['libs/'+name] = plugins/name
+    for name, path in runtime['found'].items():
+        files['libs/'+name] = path
+    runtime_dirs = [str(path) for path in runtime['search_dirs']]
+    runtime_paths = {name:str(path) for name,path in sorted(runtime['found'].items())}
     status={'policy':'graded-adapter-compatibility-v2','compatible':False,'can_simulate':False,
             'disposition':'blocked','selected_game_root':str(game.resolve()),
             'actual_dll_sha256':None,'resource_fingerprint':None,
+            'runtime_search_dirs':runtime_dirs,'runtime_dlls':runtime_paths,
             'whole_file_sha_is_admission_gate':False,'whole_engine_behavior_equivalence_proven':False}
     try:
         missing=[name for name,path in files.items() if not path.is_file()]
+        missing.extend('libs/'+name for name in runtime['missing'])
         if missing:
             return {**status,'reason':'missing_resources','missing_files':missing,
                     'message':'请选择完整的游戏安装目录；缺少：'+', '.join(missing)}
+        if runtime['ambiguous']:
+            ambiguous={name:[str(path) for path in paths]
+                       for name,paths in sorted(runtime['ambiguous'].items())}
+            names=', '.join(sorted(ambiguous))
+            return {**status,'reason':'ambiguous_runtime_dlls','ambiguous_runtime_dlls':ambiguous,
+                    'message':'多个目录存在不同版本的同名运行库，拒绝不确定加载：'+names}
         for path in files.values():
             lease(path)
         env = os.environ.copy()
