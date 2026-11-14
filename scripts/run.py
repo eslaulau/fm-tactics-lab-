@@ -25,7 +25,9 @@ def check_inputs():
     needed = [ROOT / 'private/engine' / name for name in ASSETS]
     needed += [ROOT / 'private/catalog.json',
                ROOT / 'private/engine/fm27_native/FM27Simulator.exe',
-               ROOT / 'private/engine/fm27_native/engine_compat_profile.json']
+               ROOT / 'private/engine/fm27_native/engine_compat_profile.json',
+               ROOT / 'private/engine/fm27_native/platform-stubs/PartyWin.dll',
+               ROOT / 'private/engine/fm27_native/platform-stubs/PlayFabMultiplayerWin.dll']
     missing = [str(path.relative_to(ROOT)) for path in needed if not path.is_file()]
     if missing:
         raise ValueError('Prepare private assets and build native first. Missing:\n' + '\n'.join(missing))
