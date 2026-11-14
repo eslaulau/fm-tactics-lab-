@@ -26,9 +26,24 @@ def main():
                     '/Fe:FM27Simulator.exe', '/Fo:desktop_host.obj', '/link', '/INCREMENTAL:NO',
                     '/MANIFEST:EMBED', '/MANIFESTINPUT:host.manifest', 'user32.lib'], cwd=out, check=True)
     dest = ROOT / 'private/engine/fm27_native'
+    dest.mkdir(parents=True, exist_ok=True)
+    stub_dir = dest / 'platform-stubs'
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    stub_source = out / 'platform_dependency_stub.cpp'
+    for filename, define in (
+        ('PartyWin.dll', 'BUILD_PARTYWIN_STUB'),
+        ('PlayFabMultiplayerWin.dll', 'BUILD_PLAYFAB_STUB'),
+    ):
+        object_file = out / (Path(filename).stem + '_stub.obj')
+        subprocess.run([
+            'cl', '/nologo', '/LD', '/O2', '/GS-', '/Zl', f'/D{define}=1',
+            str(stub_source), '/Fo' + str(object_file), '/link', '/NODEFAULTLIB',
+            '/ENTRY:DllMain', '/SUBSYSTEM:WINDOWS', 'kernel32.lib',
+            '/INCREMENTAL:NO', '/OUT:' + str(stub_dir / filename),
+        ], cwd=out, check=True)
     shutil.copy2(out / 'FM27Simulator.exe', dest / 'FM27Simulator.exe')
     shutil.copy2(ROOT / 'native/adapter_version.json', dest / 'adapter_version.json')
-    print('Built private/engine/fm27_native/FM27Simulator.exe')
+    print('Built FM27Simulator.exe and fail-closed PartyWin/PlayFab import stubs')
 
 
 if __name__ == '__main__':
