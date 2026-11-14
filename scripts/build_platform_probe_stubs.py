@@ -41,16 +41,16 @@ def build(output):
         if len(names) != expected_count:
             raise ValueError(f'{filename}: manifest has {len(names)} names, expected {expected_count}')
         source = template.replace('@MODULE_NAME@', filename).replace(
-            '@WRAPPERS@', '\\n'.join(f'DEFINE_PLATFORM_PROBE({name})' for name in names))
+            '@WRAPPERS@', '\n'.join(f'DEFINE_PLATFORM_PROBE({name})' for name in names))
         stem = Path(filename).stem
         source_path = output / f'{stem}_probe.generated.cpp'
         def_path = output / f'{stem}_probe.generated.def'
         object_path = output / f'{stem}_probe.obj'
         dll_path = output / filename
-        source_path.write_text(source, encoding='utf-8', newline='\\n')
+        source_path.write_text(source, encoding='utf-8', newline='\n')
         exports = ['LIBRARY "' + filename + '"', 'EXPORTS']
         exports.extend(f'    {name}=Probe_{name}' for name in names)
-        def_path.write_text('\\n'.join(exports) + '\\n', encoding='ascii', newline='\\n')
+        def_path.write_text('\n'.join(exports) + '\n', encoding='ascii', newline='\n')
         subprocess.run([
             'cl', '/nologo', '/LD', '/O2', '/GS-', '/Zl', str(source_path),
             '/Fo' + str(object_path), '/link', '/NODEFAULTLIB', '/ENTRY:DllMain',
