@@ -49,26 +49,26 @@ match test; see [PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.m
 
 ## Native adapter registry
 
-`native/adapter_registry.json` is the source of truth for distribution-specific
+\`native/adapter_registry.json\` is the source of truth for distribution-specific
 native adapters. Each enabled adapter has its own reference DLL identity,
 profile metadata, version file, generated compatibility header and
-`FM27Simulator.exe`. Shared runtime files and the fail-closed platform boundary
-remain under `private/engine/fm27_native`.
+\`FM27Simulator.exe\`. Shared runtime files and the fail-closed platform boundary
+remain under \`private/engine/fm27_native\`.
 
 The currently verified local reference is the Steam FM27 27.0.1 build
-`F79B0A34...`. Build it with:
+\`F79B0A34...\`. Build it with:
 
-```bat
-.venv\\Scripts\\python.exe scripts\\build_native.py --adapter steam_27_0_1_2494687 --reference-dll "D:\\Games\\Football Manager 27\\fm_Data\\Plugins\\x86_64\\game_plugin.dll"
-```
+\`\`\`bat
+.venv\Scripts\python.exe scripts\build_native.py --adapter steam_27_0_1_2494687 --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
+\`\`\`
 
 The runner selects an exact reference SHA256 automatically:
 
-```powershell
-.venv\\Scripts\\python.exe scripts/run.py --game-root "D:\\Games\\Football Manager 27" --adapter auto
-```
+\`\`\`powershell
+.venv\Scripts\python.exe scripts/run.py --game-root "D:\Games\Football Manager 27" --adapter auto
+\`\`\`
 
-An explicit `--adapter ID` is available for a deliberate compatibility trial.
+An explicit \`--adapter ID\` is available for a deliberate compatibility trial.
 When more than one adapter is enabled and a DLL hash matches none, selection is
 required rather than silently treating an Epic build as Steam. The Epic slot is
 currently reserved but disabled: it will only be enabled after the exact local
