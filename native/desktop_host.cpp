@@ -1284,8 +1284,9 @@ static int worker_loop(void* object){
 
 
 static int scan_activation(HMODULE module,const fs::path& path){
-    // Read-only diagnostic: find 1-valued words near the known activation gate
-    // in the PE section that actually contains that gate (for this build: .ecode).
+    // Read-only diagnostic: monitor every aligned DWORD in the gate's nearby
+    // file-backed section window, not only words whose on-disk value is 1.
+    // This captures both loader-time differences and post-load state changes.
     // Never writes engine memory or forces the activation gate.
     constexpr uint32_t configured_gate_rva=0x1718f818;
     constexpr uint32_t scan_radius=0x100000; // 1 MiB on either side of the gate.
@@ -1298,7 +1299,8 @@ static int scan_activation(HMODULE module,const fs::path& path){
     if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_nt_header\"}\n",log_file);fflush(log_file);return 120;
     }
-    if(configured_gate_rva%4||configured_gate_rva>nt->OptionalHeader.SizeOfImage-sizeof(uint32_t)){
+    if(nt->OptionalHeader.SizeOfImage<sizeof(uint32_t)||configured_gate_rva%4||
+       configured_gate_rva>nt->OptionalHeader.SizeOfImage-sizeof(uint32_t)){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"gate_outside_image\"}\n",log_file);fflush(log_file);return 120;
     }
     const IMAGE_SECTION_HEADER* gate_section=nullptr;
@@ -1330,39 +1332,44 @@ static int scan_activation(HMODULE module,const fs::path& path){
     if(!input||static_cast<size_t>(input.gcount())!=disk.size()){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"read_image_failed\"}\n",log_file);fflush(log_file);return 121;
     }
-    struct Candidate{uint32_t offset;uint32_t first;uint32_t last;int zero_ms;unsigned changes;};
-    std::vector<Candidate> candidates;
-    for(uint32_t offset=0;offset+4<=disk.size();offset+=4){
-        uint32_t value=0;memcpy(&value,disk.data()+offset,sizeof(value));
-        if(value==1)candidates.push_back({offset,0,0,-1,0});
-    }
-    std::array<char,9> section_name{};
-    memcpy(section_name.data(),gate_section->Name,8);
-    auto gate=reinterpret_cast<volatile uint32_t*>(base+configured_gate_rva);
-    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section\":\"%s\",\"section_rva\":\"0x%x\",\"section_raw_size\":%u,\"window_rva\":\"0x%x\",\"window_size\":%u,\"disk_ones\":%zu,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000,\"scan_radius_each_side\":%u}\n",
-        section_name.data(),section_start,gate_section->SizeOfRawData,window_start,window_size,
-        candidates.size(),configured_gate_rva,*gate,scan_radius);fflush(log_file);
+    const uint32_t word_count=window_size/sizeof(uint32_t);
+    struct Candidate{uint32_t offset;uint32_t disk_value;uint32_t first;uint32_t last;int zero_ms;unsigned changes;};
     std::vector<unsigned char> memory(window_size);
     SIZE_T read=0;
     if(!ReadProcessMemory(GetCurrentProcess(),base+window_start,memory.data(),memory.size(),&read)||read!=memory.size()){
         fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_read_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
             window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
     }
+    std::vector<Candidate> words;
+    words.reserve(word_count);
+    unsigned disk_ones=0,loaded_image_differences=0;
+    for(uint32_t index=0;index<word_count;index++){
+        const uint32_t offset=index*sizeof(uint32_t);
+        uint32_t disk_value=0,current=0;
+        memcpy(&disk_value,disk.data()+offset,sizeof(disk_value));
+        memcpy(&current,memory.data()+offset,sizeof(current));
+        if(disk_value==1)disk_ones++;
+        if(current!=disk_value)loaded_image_differences++;
+        words.push_back({offset,disk_value,current,current,current==0?0:-1,0});
+    }
+    std::array<char,9> section_name{};
+    memcpy(section_name.data(),gate_section->Name,8);
+    const uint32_t gate_offset=configured_gate_rva-window_start;
+    auto gate=reinterpret_cast<volatile uint32_t*>(base+configured_gate_rva);
     auto started=GetTickCount64();
-    auto poll=[&](bool first){
-        for(auto& candidate:candidates){
+    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section\":\"%s\",\"section_rva\":\"0x%x\",\"section_raw_size\":%u,\"window_rva\":\"0x%x\",\"window_size\":%u,\"scan_words\":%u,\"disk_ones\":%u,\"loaded_image_differences\":%u,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000,\"scan_radius_each_side\":%u}\n",
+        section_name.data(),section_start,gate_section->SizeOfRawData,window_start,window_size,
+        word_count,disk_ones,loaded_image_differences,configured_gate_rva,*gate,scan_radius);fflush(log_file);
+    auto poll=[&](){
+        for(auto& candidate:words){
             uint32_t value=0;memcpy(&value,memory.data()+candidate.offset,sizeof(value));
-            if(first){
-                candidate.first=candidate.last=value;
-                if(!value)candidate.zero_ms=0;
-            }else if(value!=candidate.last){
+            if(value!=candidate.last){
                 candidate.changes++;
                 if(!value&&candidate.zero_ms<0)candidate.zero_ms=static_cast<int>(GetTickCount64()-started);
                 candidate.last=value;
             }
         }
     };
-    poll(true);
     while(GetTickCount64()-started<20000){
         Sleep(100);
         read=0;
@@ -1370,23 +1377,48 @@ static int scan_activation(HMODULE module,const fs::path& path){
             fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_resample_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
                 window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
         }
-        poll(false);
+        poll();
     }
-    unsigned turned_zero=0,already_zero=0,changed=0,listed=0;
-    for(const auto& candidate:candidates){
-        if(candidate.first==0)already_zero++;
+    unsigned turned_zero=0,already_zero=0,changed=0,loaded_diff=0;
+    std::vector<size_t> report;
+    report.reserve(words.size());
+    for(size_t i=0;i<words.size();i++){
+        const auto& candidate=words[i];
+        if(candidate.disk_value==1&&candidate.first==0)already_zero++;
         if(candidate.first!=0&&candidate.last==0)turned_zero++;
         if(candidate.changes)changed++;
-        if(!(candidate.changes||candidate.first==0))continue;
-        if(listed++>=200)continue;
+        if(candidate.first!=candidate.disk_value)loaded_diff++;
+        if(candidate.changes||candidate.first!=candidate.disk_value||candidate.offset==gate_offset)
+            report.push_back(i);
+    }
+    std::sort(report.begin(),report.end(),[&](size_t left,size_t right){
+        const auto& a=words[left];const auto& b=words[right];
+        const bool a_gate=a.offset==gate_offset,b_gate=b.offset==gate_offset;
+        if(a_gate!=b_gate)return a_gate;
+        const bool a_changed=a.changes!=0,b_changed=b.changes!=0;
+        if(a_changed!=b_changed)return a_changed;
+        const bool a_zero=a.first!=0&&a.last==0,b_zero=b.first!=0&&b.last==0;
+        if(a_zero!=b_zero)return a_zero;
+        const bool a_load_diff=a.first!=a.disk_value,b_load_diff=b.first!=b.disk_value;
+        if(a_load_diff!=b_load_diff)return a_load_diff;
+        const uint32_t a_rva=window_start+a.offset,b_rva=window_start+b.offset;
+        const uint32_t a_distance=a_rva>configured_gate_rva?a_rva-configured_gate_rva:configured_gate_rva-a_rva;
+        const uint32_t b_distance=b_rva>configured_gate_rva?b_rva-configured_gate_rva:configured_gate_rva-b_rva;
+        return a_distance<b_distance;
+    });
+    const unsigned candidates_reported=static_cast<unsigned>(std::min<size_t>(report.size(),200));
+    for(unsigned listed=0;listed<candidates_reported;listed++){
+        const auto& candidate=words[report[listed]];
+        const uint32_t rva=window_start+candidate.offset;
+        const uint32_t distance=rva>configured_gate_rva?rva-configured_gate_rva:configured_gate_rva-rva;
         char context[65]={};
         for(unsigned i=0;i<32&&candidate.offset+i<disk.size();i++)
             sprintf_s(context+2*i,3,"%02x",disk[candidate.offset+i]);
-        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"at_load\":%u,\"final\":%u,\"zero_ms\":%d,\"changes\":%u,\"disk\":\"%s\"}\n",
-            window_start+candidate.offset,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
+        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"distance_to_gate\":%u,\"disk_value\":%u,\"at_load\":%u,\"final\":%u,\"zero_ms\":%d,\"changes\":%u,\"disk\":\"%s\"}\n",
+            rva,distance,candidate.disk_value,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
     }
-    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"section\":\"%s\",\"configured_gate_word\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_logged\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
-        section_name.data(),*gate,turned_zero,already_zero,changed,std::min<unsigned>(listed,200),
+    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"section\":\"%s\",\"configured_gate_word\":%u,\"scanned_words\":%u,\"loaded_image_differences\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_reported\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
+        section_name.data(),*gate,word_count,loaded_diff,turned_zero,already_zero,changed,candidates_reported,
         static_cast<unsigned long long>(GetTickCount64()-started));fflush(log_file);
     return 0;
 }
