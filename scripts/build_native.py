@@ -1,6 +1,7 @@
 """Build one FM27 native adapter while keeping shared runtime assets in one bundle."""
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -38,7 +39,7 @@ def main():
     # Test the just-built executable against the exact DLL used to generate
     # this adapter. Do not accept an unverified or merely trial-compatible build
     # as a registered reference adapter.
-    check_env = {key: value for key, value in __import__('os').environ.items()
+    check_env = {key: value for key, value in os.environ.items()
                  if key != 'FM27_EXPECTED_DLL_SHA256'}
     check = subprocess.run(
         [str(out / 'FM27Simulator.exe'), '--check-image', str(args.reference_dll.resolve())],
@@ -60,12 +61,10 @@ def main():
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(out / 'FM27Simulator.exe', adapter_dir / 'FM27Simulator.exe')
-    shutil.copy2(adapter_dir / 'engine_compat_profile.json',
-                 adapter_dir / 'engine_compat_profile.json')
     version_path = NATIVE / spec['version_metadata']
     shutil.copy2(version_path, adapter_dir / 'adapter_version.json')
     (ENGINE / 'adapter_registry.json').write_text(
-        json.dumps(registry, indent=2) + '\\n', encoding='utf8')
+        json.dumps(registry, indent=2) + '\n', encoding='utf8')
 
     # Preserve the original single-host path for existing FMTL call sites.
     # desktop_engine selects an adapter first, then stages its binary here;
