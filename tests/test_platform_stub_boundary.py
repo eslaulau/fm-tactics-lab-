@@ -381,6 +381,11 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('steam_dialog_win_event_observed', host)
         self.assertIn('PeekMessageW', host)
         self.assertIn('UnhookWinEvent', host)
+        self.assertIn('desktop_read_window_text_fast', host)
+        self.assertIn('desktop_win_event_candidate_count', host)
+        watcher = host[host.index('static DWORD WINAPI desktop_steam_window_watch_thread'):host.index('static bool desktop_start_steam_window_watch')]
+        self.assertNotIn('desktop_scan_steamapi_windows', watcher)
+        self.assertNotIn('EnumWindows', watcher)
 
     def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
         host = HOST.read_text(encoding='utf-8')

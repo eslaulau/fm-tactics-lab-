@@ -467,25 +467,49 @@ static void desktop_scan_steamapi_windows(const char* phase,bool log_summary=tru
     fflush(log_file);
 }
 
+static std::wstring desktop_read_window_text_fast(HWND window){
+    wchar_t buffer[1024]={};
+    const int length=GetWindowTextW(window,buffer,static_cast<int>(sizeof(buffer)/sizeof(buffer[0])));
+    return length>0?std::wstring(buffer,static_cast<size_t>(length)):std::wstring();
+}
+struct desktop_fast_window_text_collector {
+    std::wstring text;
+};
+static BOOL CALLBACK desktop_collect_child_window_text_fast(HWND window,LPARAM parameter){
+    auto* collector=reinterpret_cast<desktop_fast_window_text_collector*>(parameter);
+    if(!collector)return TRUE;
+    const auto value=desktop_read_window_text_fast(window);
+    if(value.empty())return TRUE;
+    if(!collector->text.empty())collector->text+=L" | ";
+    collector->text+=desktop_window_class(window);
+    collector->text+=L"=";
+    collector->text+=value;
+    return TRUE;
+}
 static void CALLBACK desktop_steam_dialog_win_event_callback(
     HWINEVENTHOOK, DWORD event, HWND window, LONG object_id, LONG child_id,
     DWORD event_thread_id, DWORD event_time){
     if(!window||object_id!=OBJID_WINDOW||child_id!=CHILDID_SELF)return;
     if(event!=EVENT_OBJECT_CREATE&&event!=EVENT_OBJECT_SHOW)return;
-    // We only need top-level windows. Child controls are collected below as
-    // text evidence, but are not emitted as separate candidate windows.
+    InterlockedIncrement(&desktop_win_event_callback_count);
+    // We only emit top-level windows. Child controls are collected as text
+    // evidence, but the dialog's root HWND is the identity we need.
     HWND root=GetAncestor(window,GA_ROOT);
     if(root&&root!=window)return;
-    const auto title=desktop_read_window_text(window);
+    const auto title=desktop_read_window_text_fast(window);
     const auto class_name=desktop_window_class(window);
     const bool standard_dialog=class_name==L"#32770";
-    const bool steam_match=desktop_contains_steam_api(title);
-    const bool error_match=desktop_contains_error_marker(title);
-    if(!standard_dialog&&!steam_match&&!error_match)return;
-    desktop_window_text_collector children={};
-    EnumChildWindows(window,desktop_collect_child_window_text,reinterpret_cast<LPARAM>(&children));
-    const bool has_steam=steam_match||desktop_contains_steam_api(children.text);
-    const bool has_error=error_match||desktop_contains_error_marker(children.text);
+    const bool steam_title=desktop_contains_steam_api(title);
+    const bool error_title=desktop_contains_error_marker(title);
+    if(!standard_dialog&&!steam_title&&!error_title)return;
+    InterlockedIncrement(&desktop_win_event_candidate_count);
+    if(standard_dialog)InterlockedIncrement(&desktop_win_event_dialog_count);
+    if(error_title)InterlockedIncrement(&desktop_win_event_error_count);
+    desktop_fast_window_text_collector children={};
+    EnumChildWindows(window,desktop_collect_child_window_text_fast,reinterpret_cast<LPARAM>(&children));
+    const bool has_steam=steam_title||desktop_contains_steam_api(children.text);
+    const bool has_error=error_title||desktop_contains_error_marker(children.text);
+    if(has_steam)InterlockedIncrement(&desktop_win_event_steam_count);
     DWORD process_id=0;
     const DWORD window_thread_id=GetWindowThreadProcessId(window,&process_id);
     wchar_t process_path[32768]={};
@@ -512,15 +536,13 @@ static void CALLBACK desktop_steam_dialog_win_event_callback(
     fflush(log_file);
 }
 
-static volatile LONG desktop_steam_window_watch_running=0;
-static HANDLE desktop_steam_window_watch_handle=nullptr;
 static DWORD WINAPI desktop_steam_window_watch_thread(void*){
     const ULONGLONG watch_started=GetTickCount64();
     ULONGLONG last_pulse=watch_started;
-    unsigned long long cycles=0;
     // Out-of-context WinEvent hooks report window create/show transitions from
-    // other processes on this desktop. PeekMessageW below pumps the hook
-    // callback queue; without a message pump these callbacks would not run.
+    // other processes on this desktop. This thread intentionally performs no
+    // EnumWindows census: it must pump hook messages without being blocked by
+    // slow or hung windows elsewhere on the desktop.
     HWINEVENTHOOK event_hook=SetWinEventHook(
         EVENT_OBJECT_CREATE,EVENT_OBJECT_SHOW,nullptr,
         desktop_steam_dialog_win_event_callback,0,0,WINEVENT_OUTOFCONTEXT);
@@ -534,26 +556,22 @@ static DWORD WINAPI desktop_steam_window_watch_thread(void*){
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        // Keep a census as a fallback for dialogs that existed before the
-        // hook was installed, while event notifications catch brief windows.
-        desktop_steam_window_scan scan={};
-        desktop_scan_steamapi_windows("load_window_watch",false,&scan);
-        cycles++;
         const ULONGLONG now=GetTickCount64();
         if(now-last_pulse>=1000){
             fprintf(log_file,
-                "{\"event\":\"steam_error_window_watch_pulse\",\"elapsed_ms\":%llu,\"cycles\":%llu,"
-                "\"enum_success\":%s,\"enum_error\":%lu,\"top_level_windows\":%u,"
-                "\"visible_windows\":%u,\"standard_dialogs\":%u,\"visible_standard_dialogs\":%u,"
-                "\"error_title_windows\":%u,\"steam_matches\":%u,\"win_event_hook_installed\":%s}\n",
-                static_cast<unsigned long long>(now-watch_started),cycles,
-                scan.enum_success?"true":"false",scan.enum_error,scan.top_level_windows,
-                scan.visible_windows,scan.standard_dialogs,scan.visible_standard_dialogs,
-                scan.error_title_windows,scan.steam_matches,event_hook?"true":"false");
+                "{\"event\":\"steam_error_window_watch_pulse\",\"elapsed_ms\":%llu,"
+                "\"win_event_hook_installed\":%s,\"callbacks\":%ld,\"candidate_windows\":%ld,"
+                "\"standard_dialogs\":%ld,\"error_windows\":%ld,\"steam_text_matches\":%ld}\n",
+                static_cast<unsigned long long>(now-watch_started),event_hook?"true":"false",
+                InterlockedCompareExchange(&desktop_win_event_callback_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_candidate_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_dialog_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_error_count,0,0),
+                InterlockedCompareExchange(&desktop_win_event_steam_count,0,0));
             fflush(log_file);
             last_pulse=now;
         }
-        Sleep(20);
+        Sleep(10);
     }
     if(event_hook){
         const BOOL unhooked=UnhookWinEvent(event_hook);
