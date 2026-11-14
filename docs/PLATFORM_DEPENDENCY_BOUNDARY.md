@@ -69,6 +69,33 @@ isolated safely; a clean zero-tick fixture preparation only establishes that
 the engine reached that point without calling the probed APIs. It does not by
 itself prove that a complete match can run without platform services.
 
+### Local no-login diagnostic procedure
+
+Build from an x64 Visual Studio Native Tools shell with the exact local FM27
+reference DLL:
+
+```powershell
+py -3.12 scripts\build_native.py --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
+```
+
+Then, with no FM client or Steam session running, use this zero-tick fixture
+preparation check:
+
+```powershell
+$env:FM27_ENGINE_ROOT = (Resolve-Path ".\private\engine").Path
+$env:FM27_GAME_ROOT = "D:\Games\Football Manager 27"
+$env:FM27_PLATFORM_PROBE_MODE = "1"
+& ".\private\engine\fm27_native\FM27Simulator.exe" --inspect-fixture
+$LASTEXITCODE
+Get-Content ".\private\engine\fm27_native\last_match.jsonl" -Tail 80
+```
+
+An API call appears as `platform_probe_unexpected_call` with the specific
+import name and captured call stack. A `native_fixture_inspected` record with
+exit code 0 means fixture preparation reached its inspection point without
+calling any probed Steam/EOS imports during that run; no simulation ticks
+were executed. Neither outcome should be described as a full match test.
+
 ## Runtime diagnostics
 
 The host records module load paths before and after the existing native
