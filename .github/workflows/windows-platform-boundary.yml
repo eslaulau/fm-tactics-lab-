@@ -203,6 +203,7 @@ jobs:
         with:
           name: fm27-adapter-registry-source
           path: |
+            native/desktop_host.cpp
             native/adapter_registry.json
             native/profile_metadata.json
             native/adapter_version.json
