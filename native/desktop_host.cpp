@@ -12,6 +12,7 @@
 #include <share.h>
 #include <filesystem>
 #include <string>
+#include <string.h>
 #include <bcrypt.h>
 #include <mutex>
 #include <map>
@@ -140,7 +141,9 @@ static bool desktop_prepare_runtime_dll_search(){
         fputs("{\"event\":\"runtime_dependency_search_dirs_empty\"}\n",log_file);fflush(log_file);
         return false;
     }
-    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu}\n",added,sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]));fflush(log_file);
+    const size_t active_dependencies=sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0])-
+        (desktop_platform_probe_mode?2:0);
+    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu,\"platform_probe_mode\":%s}\n",added,active_dependencies,desktop_platform_probe_mode?"true":"false");fflush(log_file);
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     if(desktop_platform_probe_mode){
         if(!desktop_load_platform_probe(L"steam_api64.dll")||
