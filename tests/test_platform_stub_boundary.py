@@ -334,6 +334,19 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('unhandled_exception', host)
         self.assertIn('EXCEPTION_CONTINUE_SEARCH', host)
 
+    def test_host_serializes_all_stdio_log_writes_against_multiline_exception_events(self):
+        host = HOST.read_text(encoding='utf-8')
+        self.assertIn('std::recursive_mutex worker_log_lock', host)
+        self.assertIn('fm27_locked_fprintf', host)
+        self.assertIn('fm27_locked_fputs', host)
+        self.assertIn('fm27_locked_fputc', host)
+        self.assertIn('fm27_locked_fflush', host)
+        self.assertIn('#define fprintf fm27_locked_fprintf', host)
+        self.assertIn('#define fputs fm27_locked_fputs', host)
+        self.assertIn('#define fputc fm27_locked_fputc', host)
+        self.assertIn('#define fflush fm27_locked_fflush', host)
+        self.assertIn('::vfprintf(stream,format,args)', host)
+
 
 if __name__ == '__main__':
     unittest.main()
