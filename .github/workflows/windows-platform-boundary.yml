@@ -35,6 +35,12 @@ jobs:
         with:
           arch: x64
 
+      - name: Check changed Python build and verification scripts
+        shell: pwsh
+        run: |
+          python -m py_compile scripts/build_native.py scripts/verify_platform_stub_exports.py src/runtime_layout.py src/desktop_engine.py
+          if ($LASTEXITCODE -ne 0) { throw "Python compile check failed" }
+
       - name: Run runtime-layout regression tests
         shell: pwsh
         run: |
