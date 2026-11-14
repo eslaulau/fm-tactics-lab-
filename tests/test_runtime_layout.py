@@ -42,6 +42,28 @@ class RuntimeLayoutTests(unittest.TestCase):
         result = resolve_runtime_dlls(None, self.native)
         self.assertEqual(result['found'][RUNTIME_DLLS[2]], target.resolve())
 
+    def test_bundled_libs_are_fallback_when_game_root_is_selected(self):
+        target = self.touch_dll(self.native / 'libs', RUNTIME_DLLS[4])
+        result = resolve_runtime_dlls(self.game, self.native)
+        self.assertEqual(result['found'][RUNTIME_DLLS[4]], target.resolve())
+
+    def test_all_dependencies_can_be_split_across_known_directories(self):
+        directories = (
+            self.game / 'fm_Data' / 'Plugins' / 'x86_64',
+            self.game / 'fm_Data' / 'Plugins',
+            self.game / 'fm_Data',
+            self.game,
+            self.native / 'libs',
+            self.native,
+            self.game / 'fm_Data' / 'Plugins' / 'x86_64',
+        )
+        for name, directory in zip(RUNTIME_DLLS, directories):
+            self.touch_dll(directory, name)
+        result = resolve_runtime_dlls(self.game, self.native)
+        self.assertEqual(set(result['found']), set(RUNTIME_DLLS))
+        self.assertFalse(result['missing'])
+        self.assertFalse(result['ambiguous'])
+
     def test_missing_dependencies_are_reported(self):
         result = resolve_runtime_dlls(self.game, self.native)
         self.assertEqual(set(result['missing']), set(RUNTIME_DLLS))
