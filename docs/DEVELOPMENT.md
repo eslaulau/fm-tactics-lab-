@@ -32,14 +32,19 @@ In an **x64 Native Tools Command Prompt for Visual Studio**:
 
 The public repository contains range metadata and digests. The script reconstructs comparison bytes from the exact reference DLL on your machine, verifies every range, then compiles the checked-in C++ host. Generated function bytes remain in ignored local outputs.
 
-The same build command also compiles the two experimental fail-closed import
-stubs from `native/platform_dependency_stub.cpp` into
+The build now runs `FM27Simulator.exe --check-image` against the exact
+reference DLL immediately after linking; it stops on a blocked compatibility
+contract. After compiling the two experimental fail-closed import stubs, it
+runs `scripts/verify_platform_stub_exports.py` against the actual PE binaries.
+
+The same build command compiles the two experimental fail-closed import stubs
+from `native/platform_dependency_stub.cpp` into
 `private/engine/fm27_native/platform-stubs/`. They supply the exact imported
 PartyWin and PlayFab Multiplayer names; any unexpected call is logged and
 terminates the worker instead of returning a fabricated result. EOS and Steam
-remain genuine runtime dependencies. These stubs are not validated until the
-Windows build and local-engine checks described in
-[PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.md) pass.
+remain genuine runtime dependencies. These stubs are still not a substitute for
+a real local-engine match test; see
+[PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.md).
 
 ## Run from source
 
