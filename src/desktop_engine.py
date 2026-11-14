@@ -146,7 +146,7 @@ def initialize(root):
     runtime_dirs = [str(path) for path in runtime['search_dirs']]
     runtime_paths = {name: str(path) for name, path in sorted(runtime['found'].items())}
     status = {
-        'policy': 'adapter-registry-compatibility-v1',
+        'policy': 'graded-adapter-compatibility-v2',
         'compatible': False,
         'can_simulate': False,
         'disposition': 'blocked',
