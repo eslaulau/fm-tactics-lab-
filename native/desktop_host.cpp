@@ -41,6 +41,7 @@ static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
 static bool desktop_platform_probe_mode=false;
+static bool desktop_find_activation=false;
 static std::vector<HMODULE> desktop_platform_probe_modules;
 static unsigned char* native_base;
 static uint64_t input_cursor=0,input_reads=0;
@@ -1281,6 +1282,94 @@ static int worker_loop(void* object){
     fprintf(log_file,"{\"event\":\"native_worker_completed\",\"jobs\":%u}\n",index);fflush(log_file);return index?0:184;
 }
 
+
+static int scan_activation(HMODULE module,const fs::path& path){
+    // Read-only diagnostic: locate .00cfg words that change during DLL startup.
+    // Never writes the protected section or forces the activation gate.
+    auto base=reinterpret_cast<unsigned char*>(module);
+    auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if(dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_dos_header\"}\n",log_file);fflush(log_file);return 120;
+    }
+    auto nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_nt_header\"}\n",log_file);fflush(log_file);return 120;
+    }
+    const IMAGE_SECTION_HEADER* cfg=nullptr;
+    auto sections=IMAGE_FIRST_SECTION(nt);
+    for(unsigned i=0;i<nt->FileHeader.NumberOfSections;i++){
+        if(!memcmp(sections[i].Name,".00cfg",6)){cfg=&sections[i];break;}
+    }
+    if(!cfg||!cfg->SizeOfRawData||cfg->VirtualAddress>=nt->OptionalHeader.SizeOfImage||
+       cfg->SizeOfRawData>nt->OptionalHeader.SizeOfImage-cfg->VirtualAddress){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_00cfg_section\"}\n",log_file);fflush(log_file);return 120;
+    }
+    std::vector<unsigned char> disk(cfg->SizeOfRawData);
+    std::ifstream input(path,std::ios::binary);
+    if(!input){fputs("{\"event\":\"activation_scan_error\",\"reason\":\"open_image_failed\"}\n",log_file);fflush(log_file);return 121;}
+    input.seekg(static_cast<std::streamoff>(cfg->PointerToRawData),std::ios::beg);
+    input.read(reinterpret_cast<char*>(disk.data()),static_cast<std::streamsize>(disk.size()));
+    if(!input||static_cast<size_t>(input.gcount())!=disk.size()){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"read_image_failed\"}\n",log_file);fflush(log_file);return 121;
+    }
+    struct Candidate{uint32_t offset;uint32_t first;uint32_t last;int zero_ms;unsigned changes;};
+    std::vector<Candidate> candidates;
+    for(uint32_t offset=0;offset+4<=disk.size();offset+=4){
+        uint32_t value=0;memcpy(&value,disk.data()+offset,sizeof(value));
+        if(value==1)candidates.push_back({offset,0,0,-1,0});
+    }
+    if(candidates.size()>2000000){
+        fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"candidate_limit\",\"candidates\":%zu}\n",candidates.size());fflush(log_file);return 121;
+    }
+    constexpr uint32_t configured_gate_rva=0x1718f818;
+    auto gate=reinterpret_cast<volatile uint32_t*>(base+configured_gate_rva);
+    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section_rva\":\"0x%x\",\"section_size\":%u,\"disk_ones\":%zu,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000}\n",
+        cfg->VirtualAddress,cfg->SizeOfRawData,candidates.size(),configured_gate_rva,*gate);fflush(log_file);
+    auto started=GetTickCount64();
+    std::array<unsigned char,4096> page{};
+    auto poll=[&](bool first){
+        uint32_t cached_page=UINT32_MAX;bool page_ok=false;SIZE_T read=0;
+        for(auto& candidate:candidates){
+            uint32_t page_index=candidate.offset/4096;
+            if(page_index!=cached_page){
+                cached_page=page_index;read=0;
+                uint32_t page_rva=cfg->VirtualAddress+page_index*4096;
+                SIZE_T amount=std::min<SIZE_T>(page.size(),nt->OptionalHeader.SizeOfImage-page_rva);
+                page_ok=ReadProcessMemory(GetCurrentProcess(),base+page_rva,page.data(),amount,&read)&&read==amount;
+            }
+            if(!page_ok)continue;
+            uint32_t value=0;memcpy(&value,page.data()+candidate.offset%4096,sizeof(value));
+            if(first){
+                candidate.first=candidate.last=value;
+                if(!value)candidate.zero_ms=0;
+            }else if(value!=candidate.last){
+                candidate.changes++;
+                if(!value&&candidate.zero_ms<0)candidate.zero_ms=static_cast<int>(GetTickCount64()-started);
+                candidate.last=value;
+            }
+        }
+    };
+    poll(true);
+    while(GetTickCount64()-started<20000){Sleep(100);poll(false);}
+    unsigned turned_zero=0,already_zero=0,changed=0,listed=0;
+    for(const auto& candidate:candidates){
+        if(candidate.first==0)already_zero++;
+        if(candidate.first!=0&&candidate.last==0)turned_zero++;
+        if(candidate.changes)changed++;
+        if(!(candidate.changes||candidate.first==0))continue;
+        if(listed++>=200)continue;
+        char context[65]={};
+        for(unsigned i=0;i<32&&candidate.offset+i<disk.size();i++)
+            sprintf_s(context+2*i,3,"%02x",disk[candidate.offset+i]);
+        fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"at_load\":%u,\"final\":%u,\"zero_ms\":%d,\"changes\":%u,\"disk\":\"%s\"}\n",
+            cfg->VirtualAddress+candidate.offset,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
+    }
+    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"configured_gate_word\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_logged\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
+        *gate,turned_zero,already_zero,changed,std::min<unsigned>(listed,200),
+        static_cast<unsigned long long>(GetTickCount64()-started));fflush(log_file);
+    return 0;
+}
+
 static int child(bool run_match){
     timing_start=GetTickCount64();
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
@@ -1321,6 +1410,7 @@ static int child(bool run_match){
     fprintf(log_file,"{\"event\":\"runtime_dependencies_checked\",\"fm_exe_unity_player_game_assembly_absent\":%s}\n",game_runtime_absent?"true":"false");fflush(log_file);
     if(!game_runtime_absent)return 100;
     if(policy_audit)return audit_policies();
+    if(desktop_find_activation)return scan_activation(module,fs::path(image));
     auto flag=(volatile unsigned int*)((unsigned char*)module+0x1718f818);
     auto activation_wait_started=GetTickCount64();
     fprintf(log_file,"{\"event\":\"native_activation_gate_initial\",\"rva\":\"0x1718f818\",\"word\":%u}\n",*flag);fflush(log_file);
@@ -1367,6 +1457,7 @@ int wmain(int argc,wchar_t** argv){
         else if(arg==L"--cancel-event"&&i+1<argc)desktop_cancel_name=argv[++i];
         else if(arg==L"--child")is_child=true;
         else if(arg==L"--policy-audit")policy_audit=true;
+        else if(arg==L"--find-activation")desktop_find_activation=true;
         else if(arg==L"--match"){}
         else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256]\nRuns original native simulation on a private desktop. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
         else if((arg==L"--fixture"||arg==L"--output"||arg==L"--seed"||arg==L"--tick-step"||arg==L"--dump-input"||arg==L"--scenario-file")&&i+1<argc){
@@ -1395,6 +1486,7 @@ int wmain(int argc,wchar_t** argv){
     if(!worker_manifest.empty())command+=L" --worker-manifest "+quote(worker_manifest.wstring());
     if(seed_override)command+=L" --seed "+std::to_wstring(requested_seed);
     if(policy_audit)command+=L" --policy-audit";
+    if(desktop_find_activation)command+=L" --find-activation";
     if(!desktop_cancel_name.empty())command+=L" --cancel-event "+quote(desktop_cancel_name);
     if(!dump_input.empty())command+=L" --dump-input "+quote(dump_input.wstring());
     if(inspect_fixture_only)command+=L" --inspect-fixture";
