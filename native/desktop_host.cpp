@@ -467,6 +467,14 @@ static void desktop_scan_steamapi_windows(const char* phase,bool log_summary=tru
     fflush(log_file);
 }
 
+static volatile LONG desktop_steam_window_watch_running=0;
+static volatile LONG desktop_win_event_callback_count=0;
+static volatile LONG desktop_win_event_candidate_count=0;
+static volatile LONG desktop_win_event_dialog_count=0;
+static volatile LONG desktop_win_event_error_count=0;
+static volatile LONG desktop_win_event_steam_count=0;
+static HANDLE desktop_steam_window_watch_handle=nullptr;
+
 static std::wstring desktop_read_window_text_fast(HWND window){
     wchar_t buffer[1024]={};
     const int length=GetWindowTextW(window,buffer,static_cast<int>(sizeof(buffer)/sizeof(buffer[0])));
