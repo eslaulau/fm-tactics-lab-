@@ -47,6 +47,41 @@ jobs:
           python -m unittest discover -s tests -p "test_platform_stub_boundary.py" -v
           if ($LASTEXITCODE -ne 0) { throw "Platform-boundary tests failed" }
 
+      - name: Compile native host with a temporary compile-only profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $nativeBuild = Join-Path $PWD "build\native-host-compile-only"
+          New-Item -ItemType Directory -Force -Path $nativeBuild | Out-Null
+          Get-ChildItem "native" -File | Where-Object { $_.Extension -in @(".h", ".cpp", ".manifest") } | Copy-Item -Destination $nativeBuild
+
+          @'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path.cwd()
+          sys.path.insert(0, str(root / "scripts"))
+          from profile_header import header
+
+          metadata = json.loads((root / "native/profile_metadata.json").read_text(encoding="utf-8"))
+          for item in metadata["ranges"]:
+              item["hex"] = "00" * int(item["size"])
+          output = root / "build/native-host-compile-only/engine_compat_profile.h"
+          output.write_text(header(metadata), encoding="ascii")
+          print("Generated a temporary compile-only header; it is not valid for runtime compatibility checks.")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Compile-only profile generation failed" }
+
+          Push-Location $nativeBuild
+          try {
+            & cl.exe /nologo /O2 /EHsc /std:c++17 desktop_host.cpp /Fe:FM27Simulator_compile_only.exe /Fo:desktop_host.obj /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:host.manifest user32.lib
+            if ($LASTEXITCODE -ne 0) { throw "Native host C++ compile/link failed" }
+          }
+          finally {
+            Pop-Location
+          }
+
       - name: Compile both x64 fail-closed import stubs
         shell: pwsh
         run: |
