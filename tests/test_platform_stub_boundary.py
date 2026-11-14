@@ -8,6 +8,7 @@ SOURCE = ROOT / 'native' / 'platform_dependency_stub.cpp'
 HOST = ROOT / 'native' / 'desktop_host.cpp'
 PROFILE = ROOT / 'native' / 'profile_metadata.json'
 RUNNER = ROOT / 'scripts' / 'run.py'
+VERIFIER = ROOT / 'scripts' / 'verify_platform_stub_exports.py'
 
 PARTY_EXPORTS = {
     'PartyCleanup',
@@ -123,6 +124,12 @@ class PlatformStubHostTests(unittest.TestCase):
         runner = RUNNER.read_text(encoding='utf-8')
         self.assertIn('platform-stubs/PartyWin.dll', runner)
         self.assertIn('platform-stubs/PlayFabMultiplayerWin.dll', runner)
+
+    def test_binary_verifier_checks_manifest_exports_and_kernel32_only(self):
+        verifier = VERIFIER.read_text(encoding='utf-8')
+        self.assertIn('actual_names != expected', verifier)
+        self.assertIn("imported_dlls != ['kernel32.dll']", verifier)
+        self.assertIn('len(set(actual[\'named_function_rvas\'])) != 1', verifier)
 
 
 if __name__ == '__main__':
