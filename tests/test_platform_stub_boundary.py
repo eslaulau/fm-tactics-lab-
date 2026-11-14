@@ -250,29 +250,36 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertNotIn('WriteProcessMemory', scanner)
         self.assertNotIn('VirtualProtect', scanner)
 
-    def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
-        self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
+    def test_default_host_is_offline_and_fail_closed_for_steam_eos(self):
         self.assertIn('desktop_load_platform_probe', self.host)
         self.assertIn('desktop_verify_platform_probe_iat', self.host)
         self.assertIn('verify_named_imports', self.host)
-        self.assertIn('steam_login_required\\":false', self.host)
-        self.assertIn('platform_success_faked\\":false', self.host)
+        self.assertIn('offline_platform_boundary_enabled', self.host)
+        self.assertIn('real_steam_eos_loaded', self.host)
+        self.assertNotIn('FM27_PLATFORM_PROBE_MODE', self.host)
+        self.assertNotIn('SteamAppId', self.host)
+        self.assertNotIn('SteamGameId', self.host)
         lifecycle = LIFECYCLE.read_text(encoding='utf-8')
-        self.assertIn('desktop_platform_probe_mode', lifecycle)
-        self.assertIn('steam_session_cleanup_skipped', lifecycle)
+        self.assertIn('offline_platform_cleanup_skipped', lifecycle)
+        self.assertNotIn('SteamAPI_Shutdown', lifecycle)
+        self.assertNotIn('GetProcAddress(steam', lifecycle)
 
-    def test_probe_mode_is_opt_in_from_source_runner(self):
+    def test_source_runner_requires_offline_platform_modules_by_default(self):
         runner = RUNNER.read_text(encoding='utf-8')
-        self.assertIn('--platform-probe-mode', runner)
-        self.assertIn('FM27_PLATFORM_PROBE_MODE', runner)
+        self.assertIn('platform-probes/steam_api64.dll', runner)
+        self.assertIn('platform-probes/EOSSDK-Win64-Shipping.dll', runner)
+        self.assertNotIn('--platform-probe-mode', runner)
+        self.assertNotIn('FM27_PLATFORM_PROBE_MODE', runner)
         resolver = (ROOT / 'src' / 'runtime_layout.py').read_text(encoding='utf-8')
         self.assertIn('PLATFORM_PROBE_DLLS', resolver)
-        self.assertIn('missing_platform_probes', resolver)
+        self.assertIn('offline_platform_boundary', resolver)
 
     def test_source_runner_checks_built_stubs_before_startup(self):
         runner = RUNNER.read_text(encoding='utf-8')
         self.assertIn('platform-stubs/PartyWin.dll', runner)
         self.assertIn('platform-stubs/PlayFabMultiplayerWin.dll', runner)
+        self.assertIn('platform-probes/steam_api64.dll', runner)
+        self.assertIn('platform-probes/EOSSDK-Win64-Shipping.dll', runner)
 
     def test_binary_verifier_checks_manifest_exports_and_kernel32_only(self):
         verifier = VERIFIER.read_text(encoding='utf-8')

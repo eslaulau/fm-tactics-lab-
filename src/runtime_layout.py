@@ -1,34 +1,18 @@
-"""Resolve FM27 runtime DLLs and fail-closed platform boundary modules.
-
-Normal runs use the genuine Steam/EOS runtimes. Opt-in probe mode replaces
-those two dependencies with API-identifying fail-fast diagnostic DLLs.
-PartyWin and PlayFab always use build-generated fail-fast stubs; no platform
-or ownership success is synthesized.
+"""Resolve ICU runtime DLLs and the mandatory offline Steam/EOS boundary.
+Normal match runs never search for genuine Steamworks/EOS runtimes. Their
+imports always bind to local API-identifying fail-fast modules.
+PartyWin and PlayFab use separate fail-fast stubs.
 """
 import os
 from pathlib import Path
 
-RUNTIME_DLLS = (
-    'icuuc65.dll',
-    'icuin65.dll',
-    'icudt65.dll',
-    'EOSSDK-Win64-Shipping.dll',
-    'steam_api64.dll',
-)
-
-FAIL_CLOSED_PLATFORM_STUBS = (
-    'PartyWin.dll',
-    'PlayFabMultiplayerWin.dll',
-)
-
-PLATFORM_PROBE_DLLS = (
-    'steam_api64.dll',
-    'EOSSDK-Win64-Shipping.dll',
-)
+RUNTIME_DLLS = ('icuuc65.dll', 'icuin65.dll', 'icudt65.dll')
+FAIL_CLOSED_PLATFORM_STUBS = ('PartyWin.dll', 'PlayFabMultiplayerWin.dll')
+PLATFORM_PROBE_DLLS = ('steam_api64.dll', 'EOSSDK-Win64-Shipping.dll')
 
 
 def runtime_search_dirs(game_root=None, native_root=None):
-    """Return deterministic runtime search locations in priority order."""
+    """Return deterministic locations for the genuine non-platform runtimes."""
     candidates = []
     if game_root is not None:
         game = Path(game_root)
@@ -41,7 +25,6 @@ def runtime_search_dirs(game_root=None, native_root=None):
     if native_root is not None:
         native = Path(native_root)
         candidates.extend((native / 'libs', native))
-
     result = []
     seen = set()
     for candidate in candidates:
@@ -54,41 +37,32 @@ def runtime_search_dirs(game_root=None, native_root=None):
 
 
 def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=None):
-    """Resolve engine DLLs, fail-closed stubs, and optional diagnostic probes."""
-    if platform_probe_mode is None:
-        platform_probe_mode = os.environ.get('FM27_PLATFORM_PROBE_MODE') == '1'
-    directories = runtime_search_dirs(game_root, native_root)
-    found = {}
-    missing = []
-    ambiguous = {}
+    """Resolve ICU, Party/PlayFab stubs and mandatory offline Steam/EOS traps.
 
+    platform_probe_mode remains accepted for old callers but is ignored:
+    fail-closed platform isolation is now the only runtime mode.
+    """
+    directories = runtime_search_dirs(game_root, native_root)
+    found, missing, ambiguous = {}, [], {}
     for name in RUNTIME_DLLS:
-        if platform_probe_mode and name in PLATFORM_PROBE_DLLS:
-            continue
-        matches = [
-            directory / name
-            for directory in directories
-            if (directory / name).is_file()
-        ]
+        matches = [directory / name for directory in directories
+                   if (directory / name).is_file()]
         if not matches:
             missing.append(name)
-            continue
-        if len(matches) == 1:
+        elif len(matches) == 1:
             found[name] = matches[0]
-            continue
-
-        first = matches[0]
-        try:
-            same_file = all(os.path.samefile(first, other) for other in matches[1:])
-        except OSError:
-            same_file = False
-        if same_file:
-            found[name] = first
         else:
-            ambiguous[name] = tuple(matches)
+            first = matches[0]
+            try:
+                same_file = all(os.path.samefile(first, other) for other in matches[1:])
+            except OSError:
+                same_file = False
+            if same_file:
+                found[name] = first
+            else:
+                ambiguous[name] = tuple(matches)
 
-    stubs = {}
-    missing_stubs = []
+    stubs, missing_stubs = {}, []
     if native_root is not None:
         stub_root = Path(native_root) / 'platform-stubs'
         for name in FAIL_CLOSED_PLATFORM_STUBS:
@@ -100,19 +74,17 @@ def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=N
     else:
         missing_stubs.extend(FAIL_CLOSED_PLATFORM_STUBS)
 
-    probes = {}
-    missing_probes = []
-    if platform_probe_mode:
-        if native_root is not None:
-            probe_root = Path(native_root) / 'platform-probes'
-            for name in PLATFORM_PROBE_DLLS:
-                path = probe_root / name
-                if path.is_file():
-                    probes[name] = path
-                else:
-                    missing_probes.append(name)
-        else:
-            missing_probes.extend(PLATFORM_PROBE_DLLS)
+    probes, missing_probes = {}, []
+    if native_root is not None:
+        probe_root = Path(native_root) / 'platform-probes'
+        for name in PLATFORM_PROBE_DLLS:
+            path = probe_root / name
+            if path.is_file():
+                probes[name] = path
+            else:
+                missing_probes.append(name)
+    else:
+        missing_probes.extend(PLATFORM_PROBE_DLLS)
 
     return {
         'found': found,
@@ -123,5 +95,6 @@ def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=N
         'missing_platform_stubs': tuple(missing_stubs),
         'platform_probes': probes,
         'missing_platform_probes': tuple(missing_probes),
-        'platform_probe_mode': bool(platform_probe_mode),
+        'offline_platform_boundary': True,
+        'platform_probe_mode': True,
     }

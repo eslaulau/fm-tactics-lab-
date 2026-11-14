@@ -166,6 +166,11 @@ jobs:
           name: fm27-activation-scan-source
           path: |
             native/desktop_host.cpp
+            native/native_steam_lifecycle.h
+            src/runtime_layout.py
+            src/desktop_engine.py
+            scripts/run.py
+            tests/test_runtime_layout.py
             tests/test_platform_stub_boundary.py
             .github/workflows/windows-platform-boundary.yml
           if-no-files-found: error

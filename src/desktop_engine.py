@@ -56,8 +56,7 @@ def initialize(root):
     game = game_root if game_root is not None else native
     plugins = game / 'fm_Data/Plugins/x86_64' if game_root is not None else native/'libs'
     dll = plugins/'game_plugin.dll' if game_root is not None else native/'game_plugin.dll'
-    platform_probe_mode = os.environ.get('FM27_PLATFORM_PROBE_MODE') == '1'
-    runtime = resolve_runtime_dlls(game_root, native, platform_probe_mode=platform_probe_mode)
+    runtime = resolve_runtime_dlls(game_root, native)
     files = {'game_plugin.dll':dll, 'icudt65l.dat':game/'icudt65l.dat',
              'shared/data/simatch.fmf':game/'shared/data/simatch.fmf',
              'shared/data/simatchshared.fmf':game/'shared/data/simatchshared.fmf'}
@@ -74,7 +73,7 @@ def initialize(root):
             'actual_dll_sha256':None,'resource_fingerprint':None,
             'runtime_search_dirs':runtime_dirs,'runtime_dlls':runtime_paths,
             'platform_stubs':{name:str(path) for name,path in sorted(runtime['platform_stubs'].items())},
-            'platform_probe_mode':platform_probe_mode,
+            'platform_probe_mode':True,'offline_platform_boundary':True,
             'platform_probes':{name:str(path) for name,path in sorted(runtime['platform_probes'].items())},
             'whole_file_sha_is_admission_gate':False,'whole_engine_behavior_equivalence_proven':False}
     try:

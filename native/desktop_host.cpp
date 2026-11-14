@@ -40,7 +40,7 @@ static bool policy_audit=false;
 static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
-static bool desktop_platform_probe_mode=false;
+static constexpr bool desktop_offline_platform_mode=true;
 static bool desktop_find_activation=false;
 static std::vector<HMODULE> desktop_platform_probe_modules;
 static unsigned char* native_base;
@@ -56,19 +56,13 @@ static void* at(uintptr_t rva){
 }
 
 static const char* desktop_runtime_dll_names[] = {
-    "icuuc65.dll", "icuin65.dll", "icudt65.dll",
-    "EOSSDK-Win64-Shipping.dll", "steam_api64.dll"
+    "icuuc65.dll", "icuin65.dll", "icudt65.dll"
 };
 static const wchar_t* desktop_platform_stub_names[] = {
     L"PartyWin.dll", L"PlayFabMultiplayerWin.dll"
 };
 static bool desktop_load_platform_stub(const wchar_t* name);
 static bool desktop_load_platform_probe(const wchar_t* name);
-
-static bool desktop_is_platform_probe_dll(const char* name){
-    return strcmp(name,"EOSSDK-Win64-Shipping.dll")==0 ||
-        strcmp(name,"steam_api64.dll")==0;
-}
 
 static void desktop_append_runtime_dir(std::vector<fs::path>& dirs, const fs::path& candidate){
     std::error_code error;
@@ -95,7 +89,6 @@ static std::vector<fs::path> desktop_runtime_search_dirs(){
 static bool desktop_prepare_runtime_dll_search(){
     auto dirs=desktop_runtime_search_dirs();
     for(const auto* name:desktop_runtime_dll_names){
-        if(desktop_platform_probe_mode&&desktop_is_platform_probe_dll(name))continue;
         std::vector<fs::path> matches;
         for(const auto& directory:dirs){
             auto candidate=directory/fs::path(name);
@@ -124,7 +117,6 @@ static bool desktop_prepare_runtime_dll_search(){
     for(size_t index=0;index<dirs.size();index++){
         bool contains_runtime=false;
         for(const auto* name:desktop_runtime_dll_names){
-            if(desktop_platform_probe_mode&&desktop_is_platform_probe_dll(name))continue;
             std::error_code error;
             if(fs::is_regular_file(dirs[index]/fs::path(name),error)&&!error){contains_runtime=true;break;}
         }
@@ -142,15 +134,12 @@ static bool desktop_prepare_runtime_dll_search(){
         fputs("{\"event\":\"runtime_dependency_search_dirs_empty\"}\n",log_file);fflush(log_file);
         return false;
     }
-    const size_t active_dependencies=sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0])-
-        (desktop_platform_probe_mode?2:0);
-    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu,\"platform_probe_mode\":%s}\n",added,active_dependencies,desktop_platform_probe_mode?"true":"false");fflush(log_file);
+    const size_t active_dependencies=sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]);
+    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu,\"offline_platform_boundary\":true}\n",added,active_dependencies);fflush(log_file);
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
-    if(desktop_platform_probe_mode){
-        if(!desktop_load_platform_probe(L"steam_api64.dll")||
-           !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
-        fputs("{\"event\":\"platform_probe_mode_enabled\",\"steam_login_required\":false}\n",log_file);fflush(log_file);
-    }
+    if(!desktop_load_platform_probe(L"steam_api64.dll")||
+       !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
+    fputs("{\"event\":\"offline_platform_boundary_enabled\",\"steam_login_required\":false,\"platform_success_faked\":false}\n",log_file);fflush(log_file);
     return true;
 }
 static bool desktop_load_platform_stub(const wchar_t* name){
@@ -230,7 +219,6 @@ static bool desktop_verify_platform_stub_iat(){
 }
 
 static bool desktop_verify_platform_probe_modules(){
-    if(!desktop_platform_probe_mode)return true;
     if(desktop_platform_probe_modules.size()!=2)return false;
     const wchar_t* names[]={L"steam_api64.dll",L"EOSSDK-Win64-Shipping.dll"};
     for(size_t i=0;i<2;i++){
@@ -245,7 +233,7 @@ static bool desktop_verify_platform_probe_modules(){
 }
 
 static bool desktop_verify_platform_probe_iat(){
-    if(!desktop_platform_probe_mode)return true;
+    if(!desktop_offline_platform_mode)return true;
     struct Target{const char* dll; HMODULE module; size_t count;};
     const Target targets[]={
         {"steam_api64.dll",GetModuleHandleW(L"steam_api64.dll"),11},
@@ -1564,15 +1552,7 @@ static int child(bool run_match){
     wchar_t image[MAX_PATH];
     wcscpy_s(image,(desktop_game_root.empty()?bundle/L"game_plugin.dll":desktop_game_root/L"fm_Data/Plugins/x86_64/game_plugin.dll").c_str());
     if(!known_image(image)){fprintf(log_file,"{\"event\":\"unsupported_engine_compatibility\"}\n");fflush(log_file);return 99;}
-    if(!desktop_platform_probe_mode){
-        SetEnvironmentVariableW(L"SteamNoOverlayUI",L"1");
-        fprintf(log_file,"{\"event\":\"headless_steam_policy\",\"overlay_ui_disabled\":true}\n");fflush(log_file);
-        // Installation app manifest metadata, not a fabricated ownership response.
-        SetEnvironmentVariableW(L"SteamAppId",L"4530370");
-        SetEnvironmentVariableW(L"SteamGameId",L"4530370");
-    }else{
-        fputs("{\"event\":\"headless_platform_probe_policy\",\"steam_login_required\":false,\"platform_success_faked\":false}\n",log_file);fflush(log_file);
-    }
+    fputs("{\"event\":\"headless_offline_platform_policy\",\"steam_login_required\":false,\"platform_success_faked\":false,\"real_steam_eos_loaded\":false}\n",log_file);fflush(log_file);
     if(!SetEnvironmentVariableW(L"FM27_PLATFORM_STUB_LOG",output.c_str())){
         fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
     }
@@ -1617,11 +1597,7 @@ static int child(bool run_match){
         desktop_single_step_exception_count,desktop_cpp_exception_count,desktop_other_exception_count);fflush(log_file);return 82;
 }
 int wmain(int argc,wchar_t** argv){
-    wchar_t probe_mode[16]={};
-    desktop_platform_probe_mode=GetEnvironmentVariableW(
-        L"FM27_PLATFORM_PROBE_MODE",probe_mode,
-        static_cast<DWORD>(sizeof(probe_mode)/sizeof(probe_mode[0])))&&
-        wcscmp(probe_mode,L"1")==0;
+    // Fail-closed Steam/EOS isolation is the only supported runtime mode.
     wchar_t executable[MAX_PATH];GetModuleFileNameW(nullptr,executable,MAX_PATH);bundle=fs::path(executable).parent_path();
     wchar_t desktop_env[32768]={};
     if(GetEnvironmentVariableW(L"FM27_ENGINE_ROOT",desktop_env,32768))bundle=fs::path(desktop_env)/L"fm27_native";
