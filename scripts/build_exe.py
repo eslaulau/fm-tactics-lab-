@@ -60,7 +60,9 @@ def main():
                 archive.write(path, 'python/DLLs/' + path.name)
         archive.write(library, 'python/python312.zip')
         for name in ASSETS + ('fm27_native/FM27Simulator.exe', 'fm27_native/engine_compat_profile.json',
-                              'fm27_native/adapter_version.json'):
+                              'fm27_native/adapter_version.json',
+                              'fm27_native/platform-stubs/PartyWin.dll',
+                              'fm27_native/platform-stubs/PlayFabMultiplayerWin.dll'):
             archive.write(ROOT / 'private/engine' / name, 'engine/' + name)
     exe = dist / 'FM27-Tactics-Lab-v1112.exe'
     subprocess.run([str(args.csc), '/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/utf8output',
