@@ -17,6 +17,7 @@ on:
       - "src/runtime_layout.py"
       - "src/desktop_engine.py"
       - "scripts/build_platform_probe_stubs.py"
+      - "scripts/build_native.py"
       - "scripts/verify_platform_probe_stubs.py"
       - "scripts/run.py"
       - "tests/test_platform_stub_boundary.py"
