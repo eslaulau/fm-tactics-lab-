@@ -1284,8 +1284,11 @@ static int worker_loop(void* object){
 
 
 static int scan_activation(HMODULE module,const fs::path& path){
-    // Read-only diagnostic: locate .00cfg words that change during DLL startup.
-    // Never writes the protected section or forces the activation gate.
+    // Read-only diagnostic: find 1-valued words near the known activation gate
+    // in the PE section that actually contains that gate (for this build: .ecode).
+    // Never writes engine memory or forces the activation gate.
+    constexpr uint32_t configured_gate_rva=0x1718f818;
+    constexpr uint32_t scan_radius=0x100000; // 1 MiB on either side of the gate.
     auto base=reinterpret_cast<unsigned char*>(module);
     auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     if(dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0){
@@ -1295,19 +1298,34 @@ static int scan_activation(HMODULE module,const fs::path& path){
     if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_nt_header\"}\n",log_file);fflush(log_file);return 120;
     }
-    const IMAGE_SECTION_HEADER* cfg=nullptr;
+    if(configured_gate_rva%4||configured_gate_rva>nt->OptionalHeader.SizeOfImage-sizeof(uint32_t)){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"gate_outside_image\"}\n",log_file);fflush(log_file);return 120;
+    }
+    const IMAGE_SECTION_HEADER* gate_section=nullptr;
     auto sections=IMAGE_FIRST_SECTION(nt);
     for(unsigned i=0;i<nt->FileHeader.NumberOfSections;i++){
-        if(!memcmp(sections[i].Name,".00cfg",6)){cfg=&sections[i];break;}
+        const auto& section=sections[i];
+        if(configured_gate_rva>=section.VirtualAddress&&
+           configured_gate_rva+sizeof(uint32_t)<=section.VirtualAddress+section.SizeOfRawData){
+            gate_section=&section;break;
+        }
     }
-    if(!cfg||!cfg->SizeOfRawData||cfg->VirtualAddress>=nt->OptionalHeader.SizeOfImage||
-       cfg->SizeOfRawData>nt->OptionalHeader.SizeOfImage-cfg->VirtualAddress){
-        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_00cfg_section\"}\n",log_file);fflush(log_file);return 120;
+    if(!gate_section||!gate_section->SizeOfRawData){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"gate_section_not_file_backed\"}\n",log_file);fflush(log_file);return 120;
     }
-    std::vector<unsigned char> disk(cfg->SizeOfRawData);
+    const uint32_t section_start=gate_section->VirtualAddress;
+    const uint32_t section_end=section_start+gate_section->SizeOfRawData;
+    const uint32_t window_start=std::max(section_start,configured_gate_rva-scan_radius)&~3u;
+    const uint32_t window_end=std::min(section_end,configured_gate_rva+scan_radius+sizeof(uint32_t))&~3u;
+    if(window_end<=window_start||window_end-window_start>2*scan_radius+8){
+        fputs("{\"event\":\"activation_scan_error\",\"reason\":\"invalid_scan_window\"}\n",log_file);fflush(log_file);return 120;
+    }
+    const uint32_t window_size=window_end-window_start;
+    const uint32_t disk_offset=gate_section->PointerToRawData+(window_start-section_start);
+    std::vector<unsigned char> disk(window_size);
     std::ifstream input(path,std::ios::binary);
     if(!input){fputs("{\"event\":\"activation_scan_error\",\"reason\":\"open_image_failed\"}\n",log_file);fflush(log_file);return 121;}
-    input.seekg(static_cast<std::streamoff>(cfg->PointerToRawData),std::ios::beg);
+    input.seekg(static_cast<std::streamoff>(disk_offset),std::ios::beg);
     input.read(reinterpret_cast<char*>(disk.data()),static_cast<std::streamsize>(disk.size()));
     if(!input||static_cast<size_t>(input.gcount())!=disk.size()){
         fputs("{\"event\":\"activation_scan_error\",\"reason\":\"read_image_failed\"}\n",log_file);fflush(log_file);return 121;
@@ -1318,27 +1336,22 @@ static int scan_activation(HMODULE module,const fs::path& path){
         uint32_t value=0;memcpy(&value,disk.data()+offset,sizeof(value));
         if(value==1)candidates.push_back({offset,0,0,-1,0});
     }
-    if(candidates.size()>2000000){
-        fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"candidate_limit\",\"candidates\":%zu}\n",candidates.size());fflush(log_file);return 121;
-    }
-    constexpr uint32_t configured_gate_rva=0x1718f818;
+    std::array<char,9> section_name{};
+    memcpy(section_name.data(),gate_section->Name,8);
     auto gate=reinterpret_cast<volatile uint32_t*>(base+configured_gate_rva);
-    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section_rva\":\"0x%x\",\"section_size\":%u,\"disk_ones\":%zu,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000}\n",
-        cfg->VirtualAddress,cfg->SizeOfRawData,candidates.size(),configured_gate_rva,*gate);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"activation_scan_started\",\"section\":\"%s\",\"section_rva\":\"0x%x\",\"section_raw_size\":%u,\"window_rva\":\"0x%x\",\"window_size\":%u,\"disk_ones\":%zu,\"configured_gate_rva\":\"0x%x\",\"configured_gate_word\":%u,\"wait_ms\":20000,\"scan_radius_each_side\":%u}\n",
+        section_name.data(),section_start,gate_section->SizeOfRawData,window_start,window_size,
+        candidates.size(),configured_gate_rva,*gate,scan_radius);fflush(log_file);
+    std::vector<unsigned char> memory(window_size);
+    SIZE_T read=0;
+    if(!ReadProcessMemory(GetCurrentProcess(),base+window_start,memory.data(),memory.size(),&read)||read!=memory.size()){
+        fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_read_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
+            window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
+    }
     auto started=GetTickCount64();
-    std::array<unsigned char,4096> page{};
     auto poll=[&](bool first){
-        uint32_t cached_page=UINT32_MAX;bool page_ok=false;SIZE_T read=0;
         for(auto& candidate:candidates){
-            uint32_t page_index=candidate.offset/4096;
-            if(page_index!=cached_page){
-                cached_page=page_index;read=0;
-                uint32_t page_rva=cfg->VirtualAddress+page_index*4096;
-                SIZE_T amount=std::min<SIZE_T>(page.size(),nt->OptionalHeader.SizeOfImage-page_rva);
-                page_ok=ReadProcessMemory(GetCurrentProcess(),base+page_rva,page.data(),amount,&read)&&read==amount;
-            }
-            if(!page_ok)continue;
-            uint32_t value=0;memcpy(&value,page.data()+candidate.offset%4096,sizeof(value));
+            uint32_t value=0;memcpy(&value,memory.data()+candidate.offset,sizeof(value));
             if(first){
                 candidate.first=candidate.last=value;
                 if(!value)candidate.zero_ms=0;
@@ -1350,7 +1363,15 @@ static int scan_activation(HMODULE module,const fs::path& path){
         }
     };
     poll(true);
-    while(GetTickCount64()-started<20000){Sleep(100);poll(false);}
+    while(GetTickCount64()-started<20000){
+        Sleep(100);
+        read=0;
+        if(!ReadProcessMemory(GetCurrentProcess(),base+window_start,memory.data(),memory.size(),&read)||read!=memory.size()){
+            fprintf(log_file,"{\"event\":\"activation_scan_error\",\"reason\":\"memory_resample_failed\",\"rva\":\"0x%x\",\"requested\":%u,\"read\":%llu,\"error\":%lu}\n",
+                window_start,window_size,static_cast<unsigned long long>(read),GetLastError());fflush(log_file);return 122;
+        }
+        poll(false);
+    }
     unsigned turned_zero=0,already_zero=0,changed=0,listed=0;
     for(const auto& candidate:candidates){
         if(candidate.first==0)already_zero++;
@@ -1362,10 +1383,10 @@ static int scan_activation(HMODULE module,const fs::path& path){
         for(unsigned i=0;i<32&&candidate.offset+i<disk.size();i++)
             sprintf_s(context+2*i,3,"%02x",disk[candidate.offset+i]);
         fprintf(log_file,"{\"event\":\"activation_candidate\",\"rva\":\"0x%x\",\"at_load\":%u,\"final\":%u,\"zero_ms\":%d,\"changes\":%u,\"disk\":\"%s\"}\n",
-            cfg->VirtualAddress+candidate.offset,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
+            window_start+candidate.offset,candidate.first,candidate.last,candidate.zero_ms,candidate.changes,context);
     }
-    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"configured_gate_word\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_logged\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
-        *gate,turned_zero,already_zero,changed,std::min<unsigned>(listed,200),
+    fprintf(log_file,"{\"event\":\"activation_scan_completed\",\"section\":\"%s\",\"configured_gate_word\":%u,\"turned_zero_after_load\":%u,\"already_zero_at_load\":%u,\"changed_candidates\":%u,\"candidates_logged\":%u,\"elapsed_ms\":%llu,\"memory_modified\":false}\n",
+        section_name.data(),*gate,turned_zero,already_zero,changed,std::min<unsigned>(listed,200),
         static_cast<unsigned long long>(GetTickCount64()-started));fflush(log_file);
     return 0;
 }
@@ -1459,7 +1480,7 @@ int wmain(int argc,wchar_t** argv){
         else if(arg==L"--policy-audit")policy_audit=true;
         else if(arg==L"--find-activation")desktop_find_activation=true;
         else if(arg==L"--match"){}
-        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256] [--find-activation]\nRuns original native simulation on a private desktop. --find-activation performs a read-only 20 s .00cfg scan. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
+        else if(arg==L"--help"){puts("FM27Simulator [--fixture INPUT.pkm] [--seed UINT32] [--output RUN.jsonl] [--tick-step 1..256] [--find-activation]\nRuns original native simulation on a private desktop. --find-activation performs a read-only 20 s scan around the activation gate. Retains the complete native DLL; no fm.exe or Unity launch.");return 0;}
         else if((arg==L"--fixture"||arg==L"--output"||arg==L"--seed"||arg==L"--tick-step"||arg==L"--dump-input"||arg==L"--scenario-file")&&i+1<argc){
             auto value=argv[++i];
             if(arg==L"--fixture")fixture=fs::absolute(value);
