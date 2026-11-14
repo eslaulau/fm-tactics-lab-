@@ -44,7 +44,7 @@ static void platform_probe_fail(const char* api) {
         if (dos->e_magic == IMAGE_DOS_SIGNATURE && dos->e_lfanew > 0 &&
             dos->e_lfanew < 0x100000) {
             const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
-                engine + static_cast<std::uintptr_t>(dos->e_lfanew));
+                engine + static_cast<uintptr_t>(dos->e_lfanew));
             if (nt->Signature == IMAGE_NT_SIGNATURE &&
                 nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
                 engine_size = nt->OptionalHeader.SizeOfImage;
