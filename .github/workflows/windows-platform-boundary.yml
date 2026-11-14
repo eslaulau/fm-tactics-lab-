@@ -9,10 +9,16 @@ on:
       - "native/platform_dependency_stub.cpp"
       - "native/desktop_host.cpp"
       - "native/platform_stub_iat_verifier.h"
+      - "native/platform_probe_stub_template.cpp"
+      - "native/native_steam_lifecycle.h"
       - "native/platform_stub_loader_smoke.cpp"
       - "native/platform_stub_import_fixture.cpp"
       - "native/profile_metadata.json"
       - "src/runtime_layout.py"
+      - "src/desktop_engine.py"
+      - "scripts/build_platform_probe_stubs.py"
+      - "scripts/verify_platform_probe_stubs.py"
+      - "scripts/run.py"
       - "tests/test_platform_stub_boundary.py"
       - "tests/test_runtime_layout.py"
       - ".github/workflows/windows-platform-boundary.yml"
@@ -41,7 +47,7 @@ jobs:
       - name: Check changed Python build and verification scripts
         shell: pwsh
         run: |
-          python -m py_compile scripts/build_native.py scripts/verify_platform_stub_exports.py src/runtime_layout.py src/desktop_engine.py
+          python -m py_compile scripts/build_native.py scripts/build_platform_probe_stubs.py scripts/verify_platform_stub_exports.py scripts/verify_platform_probe_stubs.py scripts/run.py src/runtime_layout.py src/desktop_engine.py
           if ($LASTEXITCODE -ne 0) { throw "Python compile check failed" }
 
       - name: Run runtime-layout regression tests
@@ -125,6 +131,13 @@ jobs:
             Write-Host ($variant.Name + ".dll exports verified: " + $names.Count)
           }
 
+      - name: Compile and verify API-identifying Steam EOS diagnostic probes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python scripts/build_platform_probe_stubs.py --output build/platform-probes
+          if ($LASTEXITCODE -ne 0) { throw "Steam/EOS diagnostic probe build or PE verification failed" }
+
       - name: Smoke-test Windows binding to preloaded stub DLLs
         shell: pwsh
         run: |
@@ -155,5 +168,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fm27-fail-closed-platform-stubs-x64
-          path: build/platform-stubs/*.dll
+          path: |
+            build/platform-stubs/*.dll
+            build/platform-probes/*.dll
           if-no-files-found: error
