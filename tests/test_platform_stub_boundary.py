@@ -170,6 +170,14 @@ class PlatformStubHostTests(unittest.TestCase):
         self.assertIn('after_native_initializer', self.host)
         self.assertNotIn('native_platform_initialized', self.host)
 
+    def test_activation_gate_emits_sampled_state_and_exception_context(self):
+        self.assertIn('native_activation_gate_initial', self.host)
+        self.assertIn('native_activation_gate_sample', self.host)
+        self.assertIn('single_step_exceptions', self.host)
+        self.assertIn('cpp_exceptions', self.host)
+        self.assertIn('exception_context', self.host)
+        self.assertIn('CaptureStackBackTrace', self.host)
+
     def test_probe_mode_replaces_steam_eos_without_supplying_success(self):
         self.assertIn('FM27_PLATFORM_PROBE_MODE', self.host)
         self.assertIn('desktop_load_platform_probe', self.host)
