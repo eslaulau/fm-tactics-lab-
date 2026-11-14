@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "default_adapter": "steam_27_0_1_2494687",
+  "adapters": [
+    {
+      "id": "steam_27_0_1_2494687",
+      "distribution": "steam",
+      "display_name": "FM27 27.0.1 Steam (2494687)",
+      "enabled": true,
+      "status": "verified_reference",
+      "reference_sha256": "f79b0a3413dd0e3f461b0afbc3ff397003f4a26d7525a30717428de6a8b91196",
+      "profile_metadata": "profile_metadata.json",
+      "version_metadata": "adapter_version.json",
+      "output_directory": "adapters/steam_27_0_1_2494687"
+    },
+    {
+      "id": "epic_27_0_1",
+      "distribution": "epic",
+      "display_name": "FM27 27.0.1 Epic",
+      "enabled": false,
+      "status": "awaiting_local_reference",
+      "reference_sha256": null,
+      "profile_metadata": null,
+      "version_metadata": null,
+      "output_directory": "adapters/epic_27_0_1",
+      "reason": "Requires the exact local Epic game_plugin.dll and a separately validated Epic ABI profile."
+    }
+  ],
+  "selection_policy": {
+    "exact_sha256_first": true,
+    "unknown_build_single_adapter_fallback": true,
+    "unknown_build_multiple_adapters_requires_explicit_choice": true
+  },
+  "platform_services": {
+    "boundary": "fail_closed",
+    "apis_are_not_faked": true,
+    "services": [
+      "Steamworks",
+      "Epic Online Services",
+      "PartyWin",
+      "PlayFab"
+    ]
+  }
+}
