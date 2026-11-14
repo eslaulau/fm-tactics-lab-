@@ -7,6 +7,10 @@ static LONG desktop_steam_cleanup_started=0;
 static bool desktop_steam_cleanup_ok=true;
 
 static bool desktop_steam_cleanup(){
+    if(desktop_platform_probe_mode){
+        if(log_file){fputs("{\"event\":\"steam_session_cleanup_skipped\",\"reason\":\"diagnostic_probe_mode\"}\n",log_file);fflush(log_file);}
+        return true;
+    }
     if(InterlockedCompareExchange(&desktop_steam_cleanup_started,1,0))return desktop_steam_cleanup_ok;
     auto steam=GetModuleHandleW(L"steam_api64.dll");
     if(!steam){if(log_file){fputs("{\"event\":\"steam_session_cleanup\",\"module_loaded\":false,\"ok\":true}\n",log_file);fflush(log_file);}return true;}
