@@ -97,7 +97,8 @@ jobs:
           foreach ($variant in $variants) {
             $object = Join-Path $build ($variant.Name + ".obj")
             $dll = Join-Path $build ($variant.Name + ".dll")
-            & cl.exe /nologo /LD /O2 /GS- /Zl ("/D" + $variant.Define + "=1") $source ("/Fo" + $object) /link /NODEFAULTLIB /ENTRY:DllMain /SUBSYSTEM:WINDOWS kernel32.lib /INCREMENTAL:NO ("/OUT:" + $dll)
+            $importLibrary = Join-Path $build ($variant.Name + ".lib")
+            & cl.exe /nologo /LD /O2 /GS- /Zl ("/D" + $variant.Define + "=1") $source ("/Fo" + $object) /link /NODEFAULTLIB /ENTRY:DllMain /SUBSYSTEM:WINDOWS kernel32.lib /INCREMENTAL:NO ("/IMPLIB:" + $importLibrary) ("/OUT:" + $dll)
             if ($LASTEXITCODE -ne 0) { throw ("MSVC build failed: " + $variant.Name) }
 
             $exports = & dumpbin.exe /nologo /exports $dll
@@ -114,6 +115,26 @@ jobs:
             }
             Write-Host ($variant.Name + ".dll exports verified: " + $names.Count)
           }
+
+      - name: Smoke-test Windows binding to preloaded stub DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $build = Join-Path $PWD "build\platform-stubs"
+          $fixtureSource = Join-Path $PWD "native\platform_stub_import_fixture.cpp"
+          $fixtureObject = Join-Path $build "platform_stub_import_fixture.obj"
+          $fixtureDll = Join-Path $build "platform_stub_import_fixture.dll"
+          & cl.exe /nologo /LD /O2 /GS- /Zl $fixtureSource ("/Fo" + $fixtureObject) /link /NODEFAULTLIB /ENTRY:DllMain /SUBSYSTEM:WINDOWS (Join-Path $build "PartyWin.lib") (Join-Path $build "PlayFabMultiplayerWin.lib") /INCREMENTAL:NO ("/OUT:" + $fixtureDll)
+          if ($LASTEXITCODE -ne 0) { throw "Could not build the synthetic importer fixture" }
+
+          $smokeSource = Join-Path $PWD "native\platform_stub_loader_smoke.cpp"
+          $smokeObject = Join-Path $build "platform_stub_loader_smoke.obj"
+          $smokeExe = Join-Path $build "platform_stub_loader_smoke.exe"
+          & cl.exe /nologo /O2 /EHsc /std:c++17 $smokeSource ("/Fo" + $smokeObject) ("/Fe:" + $smokeExe)
+          if ($LASTEXITCODE -ne 0) { throw "Could not build the Windows loader smoke test" }
+
+          & $smokeExe (Join-Path $build "PartyWin.dll") (Join-Path $build "PlayFabMultiplayerWin.dll") $fixtureDll
+          if ($LASTEXITCODE -ne 0) { throw "Windows did not bind all synthetic imports to the preloaded stub modules" }
 
       - name: Verify PE exports against the pinned engine import manifest
         shell: pwsh
