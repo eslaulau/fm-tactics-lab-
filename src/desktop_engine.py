@@ -58,7 +58,8 @@ def select_adapter(registry, dll_sha256, requested=None):
         if spec is None:
             raise ValueError(f'未知的引擎适配器：{requested}')
         if spec.get('enabled') is not True:
-            raise ValueError(spec.get('reason') or f'适配器 {requested} 尚未准备好')
+            reason = spec.get('reason') or '该发行版尚无验证配置'
+            raise ValueError(f'适配器 {requested} 尚未准备好：{reason}')
         return spec, 'explicit'
     exact = [item for item in active
              if str(item.get('reference_sha256', '')).lower() == dll_sha256.lower()]
