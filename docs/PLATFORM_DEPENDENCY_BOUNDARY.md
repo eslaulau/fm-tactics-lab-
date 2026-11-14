@@ -26,9 +26,12 @@ them.
 
 The native build creates two small x64 DLLs with the exact 39 statically
 imported export names for PartyWin and PlayFab Multiplayer. The host preloads
-these modules by absolute path before loading the unchanged game_plugin.dll,
-then verifies that Windows still has those exact module handles registered
-under the imported names.
+these modules by absolute path before loading the unchanged game_plugin.dll.
+After load, the host parses the original module's in-memory PE import table and
+checks every resolved FirstThunk address for these two descriptors with
+VirtualQuery; all 20 PartyWin and 19 PlayFab slots must map to the respective
+stub module's allocation base. A simple same-name module lookup is not treated
+as sufficient proof of IAT binding.
 
 Every stub export points to one fatal handler. If an unexpected call reaches
 one, it appends platform_stub_unexpected_call to the current match log,
@@ -41,11 +44,24 @@ are resolved from the known game/bundle directories. In particular, EOS Auth,
 EOS Connect, EOS Ecom/ownership, Steam initialization, callbacks, and shutdown
 are not stubbed or given fabricated responses.
 
+## Runtime diagnostics
+
+The host records module load paths before and after the existing native
+initializer call at RVA 0x9FA910, together with its return value, duration and
+thread ID. The initializer is retained unchanged; the event name deliberately
+does not label it as a Steam/EOS initializer.
+
+The import-table verification runs immediately after loading game_plugin.dll,
+before native activation or match setup. Any count mismatch, unresolved import,
+or IAT address outside the expected stub module fails closed with a diagnostic
+exit code.
+
 ## Validation status
 
 The Python resolver tests cover known directory layouts, split dependencies,
-conflicting duplicate DLLs, and bundle-only stub selection. A Windows x64 MSVC
-build and a real local-engine match are still required before this isolation
-can be considered validated. Until then, describe it as an experimental
+conflicting duplicate DLLs, and bundle-only stub selection. Source-level tests
+check all 39 exact exports, fail-fast behavior, and the IAT-binding guard. A
+Windows x64 MSVC build and a real local-engine match are still required before
+this isolation can be considered validated. Until then, describe it as an experimental
 fail-closed loader boundary, not as proof that the two services are unused at
 runtime.
