@@ -344,6 +344,7 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('desktop_scan_steamapi_windows("after_windows_load")', host)
         self.assertIn('desktop_scan_steamapi_windows("activation_gate_sample")', host)
         self.assertIn('desktop_scan_steamapi_windows("activation_timeout")', host)
+        self.assertIn('class_name!=L"#32770"', host)
         self.assertNotIn('PostMessageW', host)
         self.assertNotIn('SendMessageW', host)
 
