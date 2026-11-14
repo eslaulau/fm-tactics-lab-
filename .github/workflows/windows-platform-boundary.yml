@@ -1,0 +1,88 @@
+name: Windows platform boundary
+
+on:
+  push:
+    branches:
+      - work/runtime-dependency-layout-20261114
+  pull_request:
+    paths:
+      - "native/platform_dependency_stub.cpp"
+      - "native/desktop_host.cpp"
+      - "native/profile_metadata.json"
+      - "src/runtime_layout.py"
+      - "tests/test_platform_stub_boundary.py"
+      - "tests/test_runtime_layout.py"
+      - ".github/workflows/windows-platform-boundary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-fail-closed-platform-stubs:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enter x64 MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Run runtime-layout regression tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_runtime_layout.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "Runtime-layout tests failed" }
+
+      - name: Run platform-boundary source tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_platform_stub_boundary.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "Platform-boundary tests failed" }
+
+      - name: Compile both x64 fail-closed import stubs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $build = Join-Path $PWD "build\platform-stubs"
+          New-Item -ItemType Directory -Force -Path $build | Out-Null
+          $source = Join-Path $PWD "native\platform_dependency_stub.cpp"
+          $variants = @(
+            @{ Name = "PartyWin"; Define = "BUILD_PARTYWIN_STUB"; Expected = 20 },
+            @{ Name = "PlayFabMultiplayerWin"; Define = "BUILD_PLAYFAB_STUB"; Expected = 19 }
+          )
+
+          foreach ($variant in $variants) {
+            $object = Join-Path $build ($variant.Name + ".obj")
+            $dll = Join-Path $build ($variant.Name + ".dll")
+            & cl.exe /nologo /LD /O2 /GS- /Zl ("/D" + $variant.Define + "=1") $source ("/Fo" + $object) /link /NODEFAULTLIB /ENTRY:DllMain /SUBSYSTEM:WINDOWS kernel32.lib /INCREMENTAL:NO ("/OUT:" + $dll)
+            if ($LASTEXITCODE -ne 0) { throw ("MSVC build failed: " + $variant.Name) }
+
+            $exports = & dumpbin.exe /nologo /exports $dll
+            if ($LASTEXITCODE -ne 0) { throw ("dumpbin failed: " + $variant.Name) }
+            $names = @(
+              $exports | ForEach-Object {
+                if ($_ -match '^\s*\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+([A-Za-z_][A-Za-z0-9_]*)') {
+                  $Matches[1]
+                }
+              }
+            )
+            if ($names.Count -ne $variant.Expected) {
+              throw ("Unexpected export count for " + $variant.Name + ": " + $names.Count + " / " + $variant.Expected)
+            }
+            Write-Host ($variant.Name + ".dll exports verified: " + $names.Count)
+          }
+
+      - name: Upload compiled stub binaries for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: fm27-fail-closed-platform-stubs-x64
+          path: build/platform-stubs/*.dll
+          if-no-files-found: error
