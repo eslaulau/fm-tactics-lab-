@@ -141,7 +141,14 @@ class InProcessBridgeProcess:
             return None
         self._last_poll = now
         query = urllib.parse.urlencode({"id": self.job_id})
-        status = self.client.request("/status?" + query, timeout=5)
+        try:
+            status = self.client.request("/status?" + query, timeout=5)
+        except Exception as error:
+            self.returncode = 255
+            self._status = {"status": "unreachable", "error": str(error)}
+            self._output = json.dumps(self._status, ensure_ascii=False).encode("utf-8")
+            self.stdout = io.BytesIO(self._output)
+            return self.returncode
         self._status = status
         if status.get("status") in ("completed", "failed"):
             self.returncode = int(status.get("returnCode", 255))
