@@ -17,6 +17,8 @@ class InProcessModeUiTests(unittest.TestCase):
         self.assertIn("api('/api/engine/mode',{mode:selected})", ENGINE_SETTINGS)
         self.assertIn("showEngineStatus(status)", ENGINE_SETTINGS)
         self.assertIn("NativeWorker Enabled", ENGINE_SETTINGS)
+        self.assertIn("workers.value='1';workers.disabled=true", ENGINE_SETTINGS)
+        self.assertIn("workers.value=isolatedWorkerCount", ENGINE_SETTINGS)
 
     def test_backend_persists_mode_and_requires_valid_idle_state(self):
         self.assertIn("if path=='/api/engine/mode':", SERVER)
