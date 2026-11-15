@@ -1,14 +1,18 @@
-# Platform dependency boundary (experimental)
+# Local engine and platform API boundary
 
-## Static evidence for the reference FM27 build
+## What the launcher isolates
 
-The checked-in adapter profile identifies the reference game_plugin.dll by
-SHA256 f79b0a3413dd0e3f461b0afbc3ff397003f4a26d7525a30717428de6a8b91196.
-The read-only import/callsite reports in the maintainer workspace record 46
-import descriptors, 806 imported functions, and 159 imports across four
-platform modules.
+FM Tactics Lab starts its own local Python service and native simulation host. It does not start Steam or Epic, read their client registries, search their library folders, or ask them to launch the game. The game root is supplied explicitly, remembered after selection, or selected with a folder picker.
 
-For this exact image hash, the full instruction scan reports:
+This is an application/launcher boundary. It is not evidence that every function imported by the game engine is independent of platform services.
+
+## Static evidence for the pinned local FM27 binary
+
+The current local reference `game_plugin.dll` is identified by SHA256:
+
+`f79b0a3413dd0e3f461b0afbc3ff397003f4a26d7525a30717428de6a8b91196`
+
+The read-only import/callsite report for that exact image records 46 import descriptors, 806 imported functions, and 159 imports across four platform-related modules:
 
 | Imported module | Imported functions | Direct calls | Jumps | Other IAT references |
 |---|---:|---:|---:|---:|
@@ -17,118 +21,32 @@ For this exact image hash, the full instruction scan reports:
 | EOSSDK-Win64-Shipping.dll | 109 | 143 | 0 | 8 |
 | steam_api64.dll | 11 | 139 | 3 | 3 |
 
-The zero-reference result makes PartyWin and PlayFab Multiplayer candidates
-for loader-level isolation. It does not prove that a runtime-populated
-function pointer, callback, or dynamically resolved symbol can never reach
-them.
+The zero-reference result makes PartyWin and PlayFab Multiplayer candidates for loader-level isolation. It does not prove that runtime-populated function pointers, callbacks, or dynamically resolved symbols can never reach them.
 
-## Fail-closed import stubs
+The Steam/EOS call-site counts are substantial. They prevent us from claiming, based on imports alone, that the game engine never uses those APIs.
 
-The native build creates two small x64 DLLs with the exact 39 statically
-imported export names for PartyWin and PlayFab Multiplayer. The host preloads
-these modules by absolute path before loading the unchanged game_plugin.dll.
-After load, the host parses the original module's in-memory PE import table and
-checks every resolved FirstThunk address for these two descriptors with
-VirtualQuery; all 20 PartyWin and 19 PlayFab slots must map to the respective
-stub module's allocation base. A simple same-name module lookup is not treated
-as sufficient proof of IAT binding.
+## Current fail-closed boundary
 
-Every stub export points to one fatal handler. If an unexpected call reaches
-one, it appends platform_stub_unexpected_call to the current match log,
-writes an OutputDebugString diagnostic, and fail-fast terminates the process.
-The stubs never return a success code, token, account, ownership, entitlement,
-lobby, or network result.
+The native build creates two x64 import stubs for the 20 PartyWin and 19 PlayFab functions. Every unexpected call is logged and terminates the worker. The Steam and EOS diagnostic modules similarly expose the exact imported names and trap unexpected calls.
 
-In normal mode, the genuine ICU, EOS SDK, and Steam runtime dependencies remain
-required and are resolved from the known game/bundle directories. In
-particular, EOS Auth, EOS Connect, EOS Ecom/ownership, Steam initialization,
-callbacks, and shutdown are not given fabricated responses.
+The probes are not real platform runtimes and are not authentication emulators. They do not return successful initialization, login, account, token, ownership, entitlement, achievement, lobby, or network results. They do not patch the original `game_plugin.dll`, alter its code, or write the engine activation flag.
 
-## No-login diagnostic probe mode
+This design gives the local host a way to identify attempted platform calls without silently manufacturing a successful match. It does **not** make a required platform call disappear. If the local game engine invokes one of the trapped APIs during startup, fixture preparation, or a match, that run must stop and be diagnosed. Do not label a DLL load or fixture setup as a complete match.
 
-The build now also generates opt-in diagnostic replacements for the 11 Steam
-and 109 EOS imports from the pinned manifest. Unlike the PartyWin/PlayFab
-boundary, these probes are deliberately **not** enabled in normal runs.
+## What the current validation proves
 
-Set `FM27_PLATFORM_PROBE_MODE=1` for a direct native-host diagnostic, or launch
-the source runner with `--platform-probe-mode`. In this mode the host does not
-require or load the genuine Steam/EOS runtime DLLs, does not set Steam app-ID
-environment metadata, and skips the Steam shutdown hook. It preloads the
-API-identifying probes by absolute path and verifies every Steam/EOS IAT slot
-belongs to the expected probe module before continuing.
+Windows CI compiles the C++ host, the PartyWin/PlayFab stubs, and the Steam/EOS diagnostic probes. It verifies PE export tables and checks that statically imported PartyWin/PlayFab functions bind to the expected fail-fast modules.
 
-Each imported API has a distinct fail-fast entry point. If the native engine
-calls one, the probe writes `platform_probe_unexpected_call` with the exact API
-name and a captured call stack (including an engine RVA when the frame lies
-inside `game_plugin.dll`), then terminates. It never returns an invented
-success result, token, login state, ownership or entitlement.
+These checks validate source/build contracts. They do not establish that the user's local game binary can complete a full match without making a platform API call. That still requires a local build using the exact `game_plugin.dll` and a real end-to-end simulation.
 
-This mode is an investigation tool, not yet a supported production runtime.
-A probe hit identifies an actual platform call that must be understood and
-isolated safely; a clean zero-tick fixture preparation only establishes that
-the engine reached that point without calling the probed APIs. It does not by
-itself prove that a complete match can run without platform services.
+## Next runtime evidence
 
-### Local no-login diagnostic procedure
+For each local run, retain the native host JSONL log and report:
 
-Build from an x64 Visual Studio Native Tools shell with the exact local FM27
-reference DLL:
+- whether `game_plugin.dll` loaded;
+- whether the engine reached the original initialization path;
+- whether `platform_probe_unexpected_call` or `platform_stub_unexpected_call` occurred, including the API name and call stack;
+- whether the activation gate changed naturally;
+- whether the native match reached its normal end and returned validated results.
 
-```powershell
-py -3.12 scripts\build_native.py --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
-```
-
-Then, with no FM client or Steam session running, use this zero-tick fixture
-preparation check:
-
-```powershell
-$env:FM27_ENGINE_ROOT = (Resolve-Path ".\private\engine").Path
-$env:FM27_GAME_ROOT = "D:\Games\Football Manager 27"
-$env:FM27_PLATFORM_PROBE_MODE = "1"
-& ".\private\engine\fm27_native\FM27Simulator.exe" --inspect-fixture
-$LASTEXITCODE
-Get-Content ".\private\engine\fm27_native\last_match.jsonl" -Tail 80
-```
-
-An API call appears as `platform_probe_unexpected_call` with the specific
-import name and captured call stack. A `native_fixture_inspected` record with
-exit code 0 means fixture preparation reached its inspection point without
-calling any probed Steam/EOS imports during that run; no simulation ticks
-were executed. Neither outcome should be described as a full match test.
-
-## Runtime diagnostics
-
-The host records module load paths before and after the existing native
-initializer call at RVA 0x9FA910, together with its return value, duration and
-thread ID. The initializer is retained unchanged; the event name deliberately
-does not label it as a Steam/EOS initializer.
-
-The shared import-table verifier checks the mapped module headers, import descriptor terminator, unique PartyWin/PlayFab descriptors, thunk-table bounds, exact 20/19 counts, and each executable IAT address's owning module. It checks only the PE regions it reads rather than assuming the entire `SizeOfImage` range is uniformly readable. The import-table verification runs immediately after loading game_plugin.dll,
-before native activation or match setup. Any count mismatch, unresolved import,
-or IAT address outside the expected stub module fails closed with a diagnostic
-exit code.
-
-## Validation status
-
-The Windows CI compiles the native host source against a temporary compile-only
-compatibility header; the header contains placeholder bytes and is never used
-for runtime or packaged output. The same CI compiles both x64 stub DLLs and builds a synthetic importer that
-contains the same 39 PartyWin/PlayFab import names. It preloads the two stubs,
-loads that importer, and checks all 39 resolved function addresses with
-`VirtualQuery`; none of the platform functions are called. The smoke executable runs the same shared PE/IAT verifier used by the actual host, and confirms it rejects swapped PartyWin/PlayFab module identities. The verifier also fails closed on duplicate or missing descriptors and malformed thunk tables. CI also runs
-`scripts/verify_platform_stub_exports.py` against the resulting PE files. The
-verifier compares actual export-name sets against the pinned original engine
-import manifest, checks that all named exports share one fail-fast code
-target, and confirms that the only imported runtime module is KERNEL32.dll.
-
-The Python resolver tests cover known directory layouts, split dependencies,
-conflicting duplicate DLLs, bundle-only stubs, and the optional no-login probe
-layout. Windows CI compiles and verifies the 11 Steam and 109 EOS named probe
-exports, including distinct trap targets and KERNEL32-only dependencies.
-Source-level tests check fail-fast behavior, the host IAT guards, and the
-no-login mode's environment and cleanup boundaries.
-A full native build using the actual local game_plugin.dll and a real local
-engine match are still required before this isolation can be considered
-validated. Until then, describe it as an experimental
-fail-closed loader boundary, not as proof that the two services are unused at
-runtime.
+A failed platform API call, activation timeout, or match timeout must remain a failure. The host must not fake a platform response or force the activation state to turn it into a nominal success.
