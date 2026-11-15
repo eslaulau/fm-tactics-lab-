@@ -22,6 +22,8 @@ class InProcessBridgeSourceTests(unittest.TestCase):
         self.assertIn("InterlockedCompareExchange(&desktop_in_process_cancel_requested", LIFECYCLE)
         self.assertIn("FM27InProcessCancel", EXPORTS)
         self.assertNotIn("SteamAPI_Shutdown", EXPORTS)
+        self.assertIn("cancelled_before_start", EXPORTS)
+        self.assertIn("_cancelPending", PLUGIN)
 
     def test_game_owned_interface_is_borrowed_not_released(self):
         self.assertIn("if(!desktop_in_process_mode)", HOST)
