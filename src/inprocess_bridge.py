@@ -99,6 +99,8 @@ def bridge_health(game_root):
 
 class InProcessCancellation:
     """Cancellation handle compatible with the standalone MatchCancellation interface."""
+    name = "inprocess"
+
     def __init__(self, game_root):
         self.client = _BridgeClient(game_root)
 
