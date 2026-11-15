@@ -938,7 +938,6 @@ class Handler(BaseHTTPRequestHandler):
                         status['execution_mode_persistence_warning']='执行方式已切换，但无法写入本地设置：'+str(error)
                     return self.send(status)
             if path=='/api/engine/select':
-                global ENGINE_COMPATIBILITY,ENGINE_DLL_SHA256
                 selected=data.get('path')
                 if not isinstance(selected,str) or not selected.strip():raise ValueError('请填写游戏安装目录')
                 selected=str(Path(selected.strip()).resolve())
