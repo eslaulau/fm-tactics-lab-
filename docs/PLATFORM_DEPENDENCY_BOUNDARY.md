@@ -31,7 +31,13 @@ The native build creates two x64 import stubs for the 20 PartyWin and 19 PlayFab
 
 The probes are not real platform runtimes and are not authentication emulators. They do not return successful initialization, login, account, token, ownership, entitlement, achievement, lobby, or network results. They do not patch the original `game_plugin.dll`, alter its code, or write the engine activation flag.
 
-This design gives the local host a way to identify attempted platform calls without silently manufacturing a successful match. It does **not** make a required platform call disappear. If the local game engine invokes one of the trapped APIs during startup, fixture preparation, or a match, that run must stop and be diagnosed. Do not label a DLL load or fixture setup as a complete match.
+## Genuine SDK comparison mode
+
+The source runner now also supports `--platform-api-mode genuine`. In this mode the host loads the unmodified `steam_api64.dll` and `EOSSDK-Win64-Shipping.dll` found in the selected local game directory, refuses conflicting duplicate copies, and verifies that all 11 Steam and 109 EOS import slots in the original engine resolve to the exact modules it loaded. PartyWin and PlayFab remain fail-closed because their static reports show no direct callsites in the pinned image; any call into those stubs still terminates with a diagnostic.
+
+The host does not call Steam/EOS initialization on behalf of the game, does not start Steam or Epic, and does not create credentials or successful API responses. The original engine's calls are allowed to reach the authentic SDK exports and receive their real results. This distinction matters: a game engine may still require a supported client launch context, account authorization, or online service. Genuine mode does not bypass such a requirement and is not evidence that a full no-client/offline match is possible.
+
+In the default `diagnostic` mode, the host continues to load the bundle's per-export fail-fast probes. This mode is useful for identifying the exact API reached before a failure.
 
 ## What the current validation proves
 
@@ -41,7 +47,7 @@ These checks validate source/build contracts. They do not establish that the use
 
 ## Next runtime evidence
 
-For each local run, retain the native host JSONL log and report:
+For each local run, retain the native host JSONL log and report the selected `platform_api_mode` as well as:
 
 - whether `game_plugin.dll` loaded;
 - whether the engine reached the original initialization path;
