@@ -188,7 +188,7 @@ class DesktopWarmRunner(BatchRunner):
             game_root=os.environ.get('FM27_GAME_ROOT')
             cancellation=InProcessCancellation(game_root) if self.execution_mode=='inprocess' else MatchCancellation()
             process=None;key=folder.name;completed=0;receipt=None;failure=None
-            began=last_progress=time.perf_counter();cancel_started=None
+            began=last_progress=time.perf_counter();cancel_started=None;abandoned_inprocess=False
             try:
                 env=os.environ.copy()
                 env.pop('FM27_SKIP_EVENT_DETAILS',None)
@@ -241,8 +241,28 @@ class DesktopWarmRunner(BatchRunner):
                             cancellation.signal();cancel_started=now
                             if timed_out:failure='原生宿主无进展，已请求取消并保留现场'
                         elif now-cancel_started>self.cleanup_timeout:
-                            process.kill();process.wait();failure='原生宿主清理超时，强制终止并保留现场'
+                            process.kill()
+                            if self.execution_mode=='inprocess':
+                                abandoned_inprocess=True
+                                failure='FM27 进程内原生线程未确认取消；已保留现场并禁止重试，请重启 FM27 后再继续'
+                                break
+                            process.wait()
+                            failure='原生宿主清理超时，强制终止并保留现场'
                     time.sleep(.02)
+                if abandoned_inprocess:
+                    record={'returncode':None,'completed':completed,'expected':len(chunk),
+                            'failure':failure,'stdout':'','wall_seconds':time.perf_counter()-began,
+                            'manifest_sha256':sha(manifest),'inprocess_cancel_unconfirmed':True,
+                            'fm27_restart_required':True,'session_log':str(startup.relative_to(root))}
+                    save(folder/'lifetime.json',record)
+                    with self.lock:self.session_diagnostics.append(record)
+                    current=chunk[min(completed,len(chunk)-1)]
+                    publish(('failure',{'variant':current['variant'],'seed':current['seed'],'failed':True,
+                        'failure_phase':'native_session','errors':[failure],
+                        'attempts':1,'log':Path(current['path']).name,
+                        'session_receipt':str((folder/'lifetime.json').relative_to(root))}))
+                    publish(('error',RuntimeError(failure)))
+                    return
                 output=process.communicate()[0].decode(errors='replace')
                 final=read_rows(startup,live=True)if startup.exists()else[]
                 cleanup=next((r for r in final if r['event']=='steam_session_cleanup'),None)
