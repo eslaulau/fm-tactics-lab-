@@ -286,11 +286,22 @@ class DesktopWarmRunner(BatchRunner):
                         'attempts':1,'log':Path(current['path']).name,'session_receipt':str((folder/'lifetime.json').relative_to(root))}))
                     publish(('error',RuntimeError('原生会话异常；已完成场次和失败现场均保留，不自动重跑')))
             except BaseException as error:
+                inprocess_cancel_unconfirmed=False
                 if process is not None and process.poll()is None:
                     cancellation.signal()
-                    try:process.wait(timeout=self.cleanup_timeout)
-                    except subprocess.TimeoutExpired:process.kill();process.wait()
-                save(folder/'failure.json',{'error':repr(error),'completed':completed,'expected':len(chunk),'entered_logs_and_seeds_retained':True})
+                    try:
+                        process.wait(timeout=self.cleanup_timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        if self.execution_mode=='inprocess':
+                            inprocess_cancel_unconfirmed=True
+                            error=RuntimeError('FM27 进程内原生线程取消未确认；没有强杀游戏进程，必须重启 FM27 后再继续')
+                        else:
+                            process.wait()
+                save(folder/'failure.json',{'error':repr(error),'completed':completed,'expected':len(chunk),
+                    'entered_logs_and_seeds_retained':True,
+                    'inprocess_cancel_unconfirmed':inprocess_cancel_unconfirmed,
+                    'fm27_restart_required':inprocess_cancel_unconfirmed})
                 publish(('error',error))
             finally:
                 with self.lock:self.processes.pop(key,None);self.cancellations.pop(key,None);self.active.pop(key,None)
