@@ -1210,7 +1210,7 @@ static const char* native_type(void* pointer){
 }
 static void dump_match_input(unsigned char* match){
     if(dump_input.empty())return;
-    FILE* f=_wfsopen(dump_input.c_str(),L"w",_SH_DENYNO);if(!f)ExitProcess(105);
+    FILE* f=_wfsopen(dump_input.c_str(),L"w",_SH_DENYNO);if(!f)desktop_finish_and_exit(105);
     auto hex=[&](const void* p,size_t n){fputc('"',f);for(size_t i=0;i<n;i++)fprintf(f,"%02x",((const unsigned char*)p)[i]);fputc('"',f);};
     auto objects=[&](const char* owner,unsigned char* root,size_t size){
         for(size_t offset=0;offset+8<=size;offset+=8){
@@ -1226,7 +1226,7 @@ static void dump_match_input(unsigned char* match){
     fputs("null],\"teams\":[",f);
     for(unsigned side=0;side<2;side++){
         auto team=*(unsigned char**)(match+0x15380+8*side);
-        unsigned count=team[0x72d];if(count>26)ExitProcess(106);
+        unsigned count=team[0x72d];if(count>26)desktop_finish_and_exit(106);
         fprintf(f,"%s{\"side\":%u,\"count\":%u,\"header_hex\":",side?",":"",side,count);hex(team,0x138);
         auto manager=*(unsigned char**)(team+0x630);
         fputs(",\"creator_hex\":",f);hex(manager+0x2848,0x28);
@@ -1246,7 +1246,7 @@ static void dump_match_input(unsigned char* match){
         unsigned list_index=0;
         for(unsigned off:{0u,0x18u,0x30u,0x48u,0x60u,0x78u,0x90u,0xa8u,0xc0u,0xd8u,0xf0u,0x108u,0x120u,0x138u,0x150u,0x168u,0x180u,0x198u,0x1c8u,0x1e0u}){
             auto v=manager+0x6f0+off;auto begin=*(uint32_t**)v,end=*(uint32_t**)(v+8);
-            if(end-begin>10000)ExitProcess(106);
+            if(end-begin>10000)desktop_finish_and_exit(106);
             fprintf(f,"%s{\"offset\":%u,\"players\":[",list_index++?",":"",off);
             for(auto p=begin;p<end;p++)fprintf(f,"%s%u",p==begin?"":",",*p);fputs("]}",f);
         }
@@ -1278,7 +1278,7 @@ static void dump_match_input(unsigned char* match){
             }fputc(']',f);
         }fputc(']',f);
         fputs(",\"instructions\":[",f);auto first=*(uint32_t**)(team+0x68),last=*(uint32_t**)(team+0x70);
-        if(last-first>512)ExitProcess(106);
+        if(last-first>512)desktop_finish_and_exit(106);
         for(auto p=first;p<last;p+=4)fprintf(f,"%s[%u,%u,%u,%u]",p==first?"":",",p[0],p[1],p[2],p[3]);
         fputs("],\"players\":[",f);
         for(unsigned i=0;i<count;i++){
@@ -1328,12 +1328,16 @@ static bool known_image(const fs::path& path){return compatible_image(path)&&fin
 #include "native_coach_presets.h"
 #include "native_execution_experiment.h"
 static int native_match(void* interface_object){
-    fprintf(log_file,"{\"event\":\"native_match_pipeline_started\",\"runtime\":\"native_library_host\",\"full_match_completed\":false}\n");fflush(log_file);
+    fprintf(log_file,"{\"event\":\"native_match_pipeline_started\",\"runtime\":\"%s\",\"full_match_completed\":false}\n",desktop_in_process_mode?"native_library_inprocess":"native_library_host");fflush(log_file);
     std::ifstream input(fixture,std::ios::binary);
     std::vector<unsigned char> bytes(std::istreambuf_iterator<char>(input),{});
     if(bytes.size()<12||bytes.size()>64*1024*1024)desktop_finish_and_exit(87);
     void* reference=nullptr;
-    *(void**)at(0x581cab0)=interface_object;
+    if(desktop_in_process_mode){
+        if(*(void**)at(0x581cab0)!=interface_object)desktop_finish_and_exit(110);
+    }else{
+        *(void**)at(0x581cab0)=interface_object;
+    }
     if(!worker_bootstrapped){
     SetCurrentDirectoryW(bundle.c_str());
     desktop_log_platform_module_state("before_native_initializer");
@@ -1460,6 +1464,10 @@ static int native_match(void* interface_object){
     auto tls=(unsigned char*)slots[index];
     if(!tls[0x4b8])((void(*)())at(0x4941140))();
     struct {void* match;uint64_t flags;} match_thread_context={match,0};
+    struct desktop_tls_value_guard {
+        void** slot; void* previous;
+        ~desktop_tls_value_guard(){if(slot)*slot=previous;}
+    } tls_context_guard{reinterpret_cast<void**>(tls+0x838),*(void**)(tls+0x838)};
     *(void**)(tls+0x838)=&match_thread_context;
     auto accepted=((unsigned char(*)(void*,void*,void*,unsigned int))at(0x4bab520))(match,&reference,interface_object,0);
     fprintf(log_file,"{\"event\":\"native_fixture_deserialized\",\"accepted\":%s,\"input_adapter\":\"original_native\"}\n",accepted?"true":"false");fflush(log_file);
@@ -1563,11 +1571,14 @@ static int native_match(void* interface_object){
                 if(!desktop_events_stop())desktop_finish_and_exit(181);
                 execution_end_match();
                 fputs("{\"event\":\"original_match_release_started\"}\n",log_file);fflush(log_file);
-                ((void(*)(void*))(*(void***)interface_object)[1])(interface_object);
+                // The standalone host owns the interface object it created. In-process mode
+                // borrows FM's global interface and must never release it.
+                if(!desktop_in_process_mode)
+                    ((void(*)(void*))(*(void***)interface_object)[1])(interface_object);
                 ((void(*)(void*))at(0x4ba6800))(match);
                 ((void(*)(void*))at(0xad9390))(match);
                 release_ref(recording_file);
-                if(*(void**)(tls+0x838)==&match_thread_context)*(void**)(tls+0x838)=nullptr;
+                // tls_context_guard restores the worker thread's previous context on return.
                 DWORD handles=0;GetProcessHandleCount(GetCurrentProcess(),&handles);
                 fprintf(log_file,"{\"event\":\"original_match_release_completed\",\"tls_context_cleared\":%s,\"process_handles\":%lu}\n",*(void**)(tls+0x838)==nullptr?"true":"false",handles);fflush(log_file);
                 return 0;
@@ -2182,6 +2193,7 @@ static int child(bool run_match){
         desktop_single_step_exception_count,desktop_cpp_exception_count,desktop_other_exception_count);fflush(log_file);
     desktop_scan_steamapi_windows("activation_timeout");return 82;
 }
+#ifndef FM27_INPROCESS_DLL
 int wmain(int argc,wchar_t** argv){
     // Fail-closed Steam/EOS isolation is the only supported runtime mode.
     wchar_t executable[MAX_PATH];GetModuleFileNameW(nullptr,executable,MAX_PATH);bundle=fs::path(executable).parent_path();
@@ -2276,3 +2288,5 @@ int wmain(int argc,wchar_t** argv){
     CloseHandle(process.hThread);CloseHandle(process.hProcess);CloseHandle(job);if(desktop)CloseDesktop(desktop);
     return (int)code;
 }
+
+#endif // FM27_INPROCESS_DLL
