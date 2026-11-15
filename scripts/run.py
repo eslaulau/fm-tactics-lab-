@@ -12,6 +12,7 @@ from prepare_private import ASSETS
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / 'private' / 'engine' / 'fm27_native'
 REGISTRY = ROOT / 'native' / 'adapter_registry.json'
+PLATFORM_API_DLLS = ('steam_api64.dll', 'EOSSDK-Win64-Shipping.dll')
 
 
 def stage_source(destination):
@@ -24,7 +25,9 @@ def stage_source(destination):
     shutil.copy2(ROOT / 'private/catalog.json', destination / 'tactics_ui/catalog.json')
 
 
-def check_inputs(adapter='auto'):
+def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None):
+    if platform_api_mode not in ('diagnostic', 'genuine'):
+        raise ValueError('platform_api_mode must be diagnostic or genuine')
     if not REGISTRY.is_file():
         raise ValueError('Missing native/adapter_registry.json. Update the source tree before building.')
     registry = json.loads(REGISTRY.read_text(encoding='utf8'))
@@ -50,10 +53,36 @@ def check_inputs(adapter='auto'):
         NATIVE / 'engine_compat_profile.json',
         NATIVE / 'adapter_registry.json',
         NATIVE / 'platform-stubs/PartyWin.dll',
-        NATIVE / 'platform-stubs/PlayFabMultiplayerWin.dll',
-        NATIVE / 'platform-probes/steam_api64.dll',
-        NATIVE / 'platform-probes/EOSSDK-Win64-Shipping.dll'
+        NATIVE / 'platform-stubs/PlayFabMultiplayerWin.dll'
     ]
+    if platform_api_mode == 'diagnostic':
+        needed.extend(NATIVE / 'platform-probes' / name for name in PLATFORM_API_DLLS)
+    else:
+        if game_root is None:
+            raise ValueError('Genuine platform API mode requires --game-root.')
+        game_root = Path(game_root)
+        game_dirs = (
+            game_root / 'fm_Data/Plugins/x86_64',
+            game_root / 'fm_Data/Plugins',
+            game_root / 'fm_Data',
+            game_root
+        )
+        for name in PLATFORM_API_DLLS:
+            matches = [directory / name for directory in game_dirs
+                       if (directory / name).is_file()]
+            if not matches:
+                needed.append(game_dirs[0] / name)
+            elif len(matches) > 1:
+                try:
+                    same_file = all(os.path.samefile(matches[0], other)
+                                    for other in matches[1:])
+                except OSError:
+                    same_file = False
+                if not same_file:
+                    raise ValueError('Multiple different game-local copies of ' + name +
+                                     '; genuine API binding is ambiguous.')
+            else:
+                needed.append(matches[0])
     for item in selected:
         relative = Path(item['output_directory'])
         if relative.is_absolute() or '..' in relative.parts:
@@ -77,10 +106,12 @@ def main():
                         help='Windows desktop for the headless native host (default: shared).')
     parser.add_argument('--adapter', default='auto',
                         help='Native adapter ID from native/adapter_registry.json, or auto by DLL SHA256.')
+    parser.add_argument('--platform-api-mode', choices=('diagnostic', 'genuine'), default='diagnostic',
+                        help='diagnostic uses fail-fast probes; genuine loads the original game-local Steam/EOS SDK DLLs.')
     args = parser.parse_args()
     if os.name != 'nt' or sys.version_info[:2] != (3, 12):
         raise SystemExit('This source edition requires Windows x64 and Python 3.12.')
-    check_inputs(args.adapter)
+    check_inputs(args.adapter, args.platform_api_mode, args.game_root)
     source = ROOT / 'build/source'
     stage_source(source)
     data = ROOT / 'data'
@@ -90,6 +121,7 @@ def main():
                FM27_GAME_ROOT=str(args.game_root.resolve()),
                FM27_DESKTOP_DATA=str(data),
                FM27_NATIVE_DESKTOP_MODE=args.desktop_mode,
+               FM27_PLATFORM_API_MODE=args.platform_api_mode,
                PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1')
     if args.adapter != 'auto':
         env['FM27_ENGINE_ADAPTER'] = args.adapter
