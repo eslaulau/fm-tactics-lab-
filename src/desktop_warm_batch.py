@@ -89,7 +89,7 @@ class DesktopWarmRunner(BatchRunner):
             if task.get('event_details',True)and not any(r.get('event')=='native_player_statistics_identity_verified'and r.get('verified')for r in rows):raise ValueError('球员统计未通过原生身份核对')
         if self.counted_sessions and not any(r.get('event')=='native_execution_context_cleared'and r.get('team_bindings_cleared')for r in rows):raise ValueError('逐场执行力上下文未清除')
         released=next(r for r in rows if r['event']=='original_match_release_completed')
-        if not released['tls_context_cleared']:raise ValueError('上一场原生线程上下文未清除')
+        if not (released.get('tls_context_cleared') or released.get('tls_context_restored')):raise ValueError('上一场原生线程上下文未恢复')
         execution = execution_receipts(rows, task['scenario'])
         statistics=next((r for r in rows if r['event']=='native_match_statistics'),None)
         if not statistics or len(statistics['teams'])!=2:raise ValueError('缺少原生球队统计')
