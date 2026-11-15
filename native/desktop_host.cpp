@@ -1563,10 +1563,10 @@ static int native_match(void* interface_object){
             auto context=*(unsigned char**)(match+0x14ea0);auto result=*(void**)(context+0x18);
             auto vtable=*(void***)result;auto score=(unsigned char*(*)(void*,unsigned int))vtable[5];
             auto home=score(result,0),away=score(result,1);
-            fprintf(log_file,"{\"event\":\"natural_match_finished\",\"full_match_completed\":true,\"runtime\":\"native_library_host\",\"extracted_engine\":false,\"tick\":%d,\"clock\":%d,\"score\":[%d,%d]}\n",tick,*(int*)(match+0x15464),home?*home:-1,away?*away:-1);fflush(log_file);
-            // Native globals retain stack-owned ICU/context buffers. End the
-            // isolated child after committing the result, before those buffers
-            // are destroyed and before DLL detach can use invalid state.
+            fprintf(log_file,"{\"event\":\"natural_match_finished\",\"full_match_completed\":true,\"runtime\":\"%s\",\"extracted_engine\":false,\"tick\":%d,\"clock\":%d,\"score\":[%d,%d]}\n",desktop_in_process_mode?"native_library_inprocess":"native_library_host",tick,*(int*)(match+0x15464),home?*home:-1,away?*away:-1);fflush(log_file);
+            // The isolated child exits after committing its result because it owns
+            // these process-wide buffers. In-process mode keeps the game-owned
+            // context alive; only the current match's stack/TLS state is released.
             FlushFileBuffers((HANDLE)_get_osfhandle(_fileno(log_file)));
             if(!worker_manifest.empty()){
                 if(!desktop_events_stop())desktop_finish_and_exit(181);
