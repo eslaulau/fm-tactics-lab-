@@ -15,6 +15,7 @@ from fm27_simulator import inspect_log
 import fm27_match_events
 from desktop_storage import require_space
 from desktop_execution import verify_execution_player, execution_receipts
+from inprocess_bridge import bridge_health, InProcessBridgeProcess, InProcessCancellation
 
 
 def sha(path):
@@ -58,14 +59,28 @@ class DesktopWarmRunner(BatchRunner):
         super().__init__(*args,**kwargs)
         self.session_diagnostics=[]
         self._abort=False
-        self.host_sha256=sha(self.root/'fm27_native/FM27Simulator.exe')
-        if self.host_sha256 not in self._capabilities_cache:
-            result=subprocess.run([str(self.root/'fm27_native/FM27Simulator.exe'),'--worker-capabilities'],
-                capture_output=True,timeout=10,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-            try:value=json.loads(result.stdout)if result.returncode==0 else {}
-            except (ValueError,UnicodeError):value={}
-            self._capabilities_cache[self.host_sha256]=value
-        self.capabilities=self._capabilities_cache[self.host_sha256]
+        self.execution_mode=os.environ.get('FM27_NATIVE_EXECUTION_MODE','isolated').strip().lower() or 'isolated'
+        if self.execution_mode not in ('isolated','inprocess'):
+            raise ValueError('FM27_NATIVE_EXECUTION_MODE 必须是 isolated 或 inprocess')
+        if self.execution_mode=='inprocess':
+            game_root=os.environ.get('FM27_GAME_ROOT')
+            if not game_root:raise ValueError('进程内模式需要 FM27_GAME_ROOT')
+            bridge_health(game_root)
+            native_dll=self.root/'fm27_native/FM27InProcessNative.dll'
+            if not native_dll.is_file():raise ValueError('缺少 fm27_native/FM27InProcessNative.dll，请重新构建原生桥接')
+            self.host_sha256=sha(native_dll)
+            self.workers=1
+            self.capabilities={'protocol':2,'max_jobs':1000000,
+                'execution_context_reset':True,'per_match_resource_release':True}
+        else:
+            self.host_sha256=sha(self.root/'fm27_native/FM27Simulator.exe')
+            if self.host_sha256 not in self._capabilities_cache:
+                result=subprocess.run([str(self.root/'fm27_native/FM27Simulator.exe'),'--worker-capabilities'],
+                    capture_output=True,timeout=10,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                try:value=json.loads(result.stdout)if result.returncode==0 else {}
+                except (ValueError,UnicodeError):value={}
+                self._capabilities_cache[self.host_sha256]=value
+            self.capabilities=self._capabilities_cache[self.host_sha256]
         maximum=self.capabilities.get('max_jobs')
         valid_limit=type(maximum)is int and 1<=maximum<=1000000
         self.counted_sessions=(valid_limit and self.capabilities.get('protocol')==2 and
@@ -135,7 +150,7 @@ class DesktopWarmRunner(BatchRunner):
         if not tasks:return
         if any(type(t.get('event_details',True))is not bool for t in tasks):raise ValueError('事件明细开关必须为布尔值')
         if len({t.get('event_details',True)for t in tasks})!=1:raise ValueError('同一批次不能混合快速与完整模式')
-        own_child_processes()
+        if self.execution_mode!='inprocess':own_child_processes()
         if any(t.get('episode')for t in tasks):raise ValueError('定位球片段须使用独立片段入口')
         messages=queue.Queue(maxsize=6)
         lanes=[tasks[i::self.workers]for i in range(min(self.workers,len(tasks)))]
@@ -170,7 +185,9 @@ class DesktopWarmRunner(BatchRunner):
                 if any('\n'in x or '\r'in x for x in values):raise ValueError('任务路径包含换行符')
                 fields.extend(values)
             manifest.write_text('\n'.join(fields)+'\n',encoding='utf8',newline='\n')
-            cancellation=MatchCancellation();process=None;key=folder.name;completed=0;receipt=None;failure=None
+            game_root=os.environ.get('FM27_GAME_ROOT')
+            cancellation=InProcessCancellation(game_root) if self.execution_mode=='inprocess' else MatchCancellation()
+            process=None;key=folder.name;completed=0;receipt=None;failure=None
             began=last_progress=time.perf_counter();cancel_started=None
             try:
                 env=os.environ.copy()
@@ -184,7 +201,10 @@ class DesktopWarmRunner(BatchRunner):
                          '--output',str(startup),'--tick-step','1','--cancel-event',cancellation.name]
                 with self.lock:
                     if self.stop.is_set():return
-                    process=subprocess.Popen(command,cwd=self.root,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
+                    if self.execution_mode=='inprocess':
+                        process=InProcessBridgeProcess(game_root,self.root,manifest,startup)
+                    else:
+                        process=subprocess.Popen(command,cwd=self.root,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)
                     self.processes[key]=process;self.cancellations[key]=cancellation
                 while True:
                     while completed<len(chunk)and Path(str(chunk[completed]['path'])+'.worker_done').exists():
@@ -195,8 +215,12 @@ class DesktopWarmRunner(BatchRunner):
                             header=read_rows(startup,live=True)
                             compatibility=next(r for r in header if r['event']=='native_engine_compatibility')
                             if not (compatibility.get('compatible')or compatibility.get('trial_allowed')):raise ValueError('原生关键接口检查失败')
-                            bootstrap=[r for r in rows if r['event']in['host_icu_data_initialized','native_engine_bootstrap_returned']]
-                            if len(bootstrap)!=2:raise ValueError('首场缺少真实初始化回执')
+                            if self.execution_mode=='inprocess':
+                                bootstrap=[r for r in rows if r.get('event')=='inprocess_game_startup_verified']
+                                if len(bootstrap)!=1:raise ValueError('进程内首场缺少原版启动上下文复用回执')
+                            else:
+                                bootstrap=[r for r in rows if r['event']in['host_icu_data_initialized','native_engine_bootstrap_returned']]
+                                if len(bootstrap)!=2:raise ValueError('首场缺少真实初始化回执')
                             receipt={'session_rows':header,'original_bootstrap_rows':bootstrap,'host_sha256':self.host_sha256,
                                      'dll_sha256':next(r['sha256']for r in header if r['event']=='native_image_fingerprint'),
                                      'compatibility':compatibility,'worker_pid':ack['pid']}
@@ -228,7 +252,9 @@ class DesktopWarmRunner(BatchRunner):
                 save(folder/'lifetime.json',record)
                 with self.lock:self.session_diagnostics.append(record)
                 if completed==len(chunk)and process.returncode in[0,180]:
-                    if process.returncode==180 or not cleanup or not cleanup.get('ok'):
+                    if self.execution_mode=='inprocess':
+                        record['inprocess_session_preserved']=True
+                    elif process.returncode==180 or not cleanup or not cleanup.get('ok'):
                         record['warning']='比赛已逐场完整释放；会话的 Steam 清理未确认，原始诊断已保留'
                         save(folder/'lifetime.json',record)
                 elif process.returncode==86 and self.stop.is_set()and not failure:
