@@ -10,7 +10,7 @@ from profile_header import header
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / 'native' / 'adapter_registry.json'
-DEFAULT_ADAPTER_ID = 'steam_27_0_1_2494687'
+DEFAULT_ADAPTER_ID = 'local_27_0_1_2494687'
 
 
 def load_registry():
