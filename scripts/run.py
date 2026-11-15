@@ -56,7 +56,10 @@ def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None)
         NATIVE / 'platform-stubs/PlayFabMultiplayerWin.dll'
     ]
     if platform_api_mode == 'diagnostic':
-        needed.extend(NATIVE / 'platform-probes' / name for name in PLATFORM_API_DLLS)
+        needed.extend((
+            NATIVE / 'platform-probes/steam_api64.dll',
+            NATIVE / 'platform-probes/EOSSDK-Win64-Shipping.dll'
+        ))
     else:
         if game_root is None:
             raise ValueError('Genuine platform API mode requires --game-root.')
