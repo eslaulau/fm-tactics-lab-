@@ -292,6 +292,7 @@ internal static class NativeBridge
     private static string? _libraryPath;
     private static RunManifestDelegate? _runManifest;
     private static CancelDelegate? _cancel;
+    private static int _cancelPending;
 
     public static (int Code, string Result) Run(string gameRoot, string engineRoot, string manifest, string sessionLog)
     {
@@ -313,7 +314,12 @@ internal static class NativeBridge
     {
         lock (LoadLock)
         {
-            return _cancel is not null && _cancel() == 0;
+            if (_cancel is null)
+            {
+                Interlocked.Exchange(ref _cancelPending, 1);
+                return true;
+            }
+            return _cancel() == 0;
         }
     }
 
@@ -342,6 +348,10 @@ internal static class NativeBridge
                 NativeLibrary.GetExport(_library, "FM27InProcessRunManifest"));
             _cancel = Marshal.GetDelegateForFunctionPointer<CancelDelegate>(
                 NativeLibrary.GetExport(_library, "FM27InProcessCancel"));
+            if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
+            {
+                _cancel();
+            }
         }
     }
 
