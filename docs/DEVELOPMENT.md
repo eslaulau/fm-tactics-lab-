@@ -1,106 +1,68 @@
-# Building FM Tactics Lab v1108.5
+# Building FM Tactics Lab v1112
 
-This source includes the career-save reader and same-league match mode shipped in v1108.5.
+This guide builds the source edition against a local FM27 game directory. The native profile is selected by the exact `game_plugin.dll` build identity; it is not a Steam/Epic storefront adapter.
 
 ## Requirements
 
-- Windows x64, full CPython 3.12 x64, and MSVC C++17 with the Windows SDK.
-- A local FM27 installation; the adapter reference build is `27.0.0+2493426`.
-- A verified v1108.5 EXE from this repository's Releases, used to supply the matching initial inputs.
+- Windows x64, CPython 3.12 x64, and MSVC C++17 with the Windows SDK.
+- A complete local FM27 27.0.1+2494687 game directory.
+- A verified v1112 FM Tactics Lab release EXE if you need to extract the matching private tool inputs.
 
-Install the save reader and its compression dependency from requirements.txt in the build environment.
+FM Tactics Lab does not start Steam or Epic clients and does not use a storefront registry to locate the game. Supply the game root directly or select it in the desktop launcher.
 
 ## Prepare local inputs
 
-Run these commands from the repository root:
+From the repository root:
 
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe scripts/prepare_private.py --release-exe "D:\Downloads\FM27-Tactics-Lab-v1108.5.exe"
+.venv\Scripts\python.exe scripts/prepare_private.py --release-exe "D:\Downloads\FM27-Tactics-Lab-v1112.exe"
 ```
 
-The script checks the original EXE and embedded payload SHA256, then reads only the named input assets into ignored `private/` directories. It does not execute the EXE. An existing matching asset directory can alternatively be supplied with `--assets-root` and `--catalog`.
+The preparation script verifies the release and extracts only the named initial tool assets into ignored `private/` directories. It does not execute the EXE.
 
-## Build the native adapter
+## Build the local engine profile
 
 In an **x64 Native Tools Command Prompt for Visual Studio**:
 
 ```bat
-.venv\Scripts\python.exe scripts\build_native.py --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
+py -3.12 scripts\build_native.py --adapter local_27_0_1_2494687 --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
 ```
 
-The public repository contains range metadata and digests. The script reconstructs comparison bytes from the exact reference DLL on your machine, verifies every range, then compiles the checked-in C++ host. Generated function bytes remain in ignored local outputs.
+The public repository stores version-specific metadata and range digests, not copied game function bytes. The builder reconstructs the comparison profile from the exact local DLL, verifies the checksums and image layout, compiles the host, and runs `FM27Simulator.exe --check-image` before publishing the host.
 
-The build now runs `FM27Simulator.exe --check-image` against the exact
-reference DLL immediately after linking; it stops on a blocked compatibility
-contract. After compiling the two experimental fail-closed import stubs, it
-runs `scripts/verify_platform_stub_exports.py` against the actual PE binaries.
-
-The same build command compiles the two experimental fail-closed import stubs
-from `native/platform_dependency_stub.cpp` into
-`private/engine/fm27_native/platform-stubs/`. They supply the exact imported
-PartyWin and PlayFab Multiplayer names; any unexpected call is logged and
-terminates the worker instead of returning a fabricated result. Steam and EOS are loaded as fail-fast diagnostic probes in the current offline
-runtime; their unexpected calls terminate the worker rather than fabricating a
-successful platform response. The original game DLL is not modified. These
-probes and PartyWin/PlayFab stubs are not a substitute for a real local-engine
-match test; see [PLATFORM_DEPENDENCY_BOUNDARY.md](PLATFORM_DEPENDENCY_BOUNDARY.md).
-
-## Native adapter registry
-
-\`native/adapter_registry.json\` is the source of truth for distribution-specific
-native adapters. Each enabled adapter has its own reference DLL identity,
-profile metadata, version file, generated compatibility header and
-\`FM27Simulator.exe\`. Shared runtime files and the fail-closed platform boundary
-remain under \`private/engine/fm27_native\`.
-
-The currently verified local reference is the Steam FM27 27.0.1 build
-\`F79B0A34...\`. Build it with:
-
-\`\`\`bat
-.venv\Scripts\python.exe scripts\build_native.py --adapter steam_27_0_1_2494687 --reference-dll "D:\Games\Football Manager 27\fm_Data\Plugins\x86_64\game_plugin.dll"
-\`\`\`
-
-The runner selects an exact reference SHA256 automatically:
-
-\`\`\`powershell
-.venv\Scripts\python.exe scripts/run.py --game-root "D:\Games\Football Manager 27" --adapter auto
-\`\`\`
-
-An explicit \`--adapter ID\` is available for a deliberate compatibility trial.
-When more than one adapter is enabled and a DLL hash matches none, selection is
-required rather than silently treating an Epic build as Steam. The Epic slot is
-currently reserved but disabled: it will only be enabled after the exact local
-Epic DLL and its own validated ABI profile are available. Do not copy the
-upstream Epic profile into this branch as a substitute for matching local
-reference evidence.
+The profile name identifies a local game binary/ABI build. It does not assert that Steam, Epic, or another client is installed or required.
 
 ## Run from source
 
-```powershell
-.venv\Scripts\python.exe scripts/run.py --game-root "D:\Games\Football Manager 27"
+In an ordinary CMD or PowerShell window:
+
+```bat
+py -3.12 scripts\run.py --game-root "D:\Games\Football Manager 27"
 ```
 
-Open the printed loopback URL after startup. Press `Ctrl+C` to stop the source edition.
+The source runner passes this path directly to the local engine host. Open the printed loopback URL after the service reports ready. Press `Ctrl+C` to stop it.
+
+## Platform API boundary
+
+The reference `game_plugin.dll` has static imports from Steamworks and Epic Online Services, in addition to PartyWin and PlayFab. The host does not launch either storefront client. Its current fail-closed API probes are diagnostic traps, not replacement implementations: an unexpected call is logged and terminates the worker. They never return successful authentication, ownership, entitlement, or online-service results.
+
+This means the FMTL launcher itself is client-independent, but a successful no-client match still has to be demonstrated with the actual local engine build. A clean DLL load or `--check-image` result is not proof that a complete match can run without platform APIs. See [the platform API boundary report](PLATFORM_DEPENDENCY_BOUNDARY.md).
 
 ## Build a local desktop EXE
 
 ```powershell
-.venv\Scripts\python.exe scripts/build_exe.py --python-home "D:\Python312"
+py -3.12 scripts/build_exe.py --python-home "D:\Python312"
 ```
 
-Supply a full CPython 3.12 x64 distribution containing `Lib`, `DLLs`, `python312.dll`, the runtime libraries and `LICENSE.txt`. The script uses the .NET Framework C# compiler; `--csc` can override its location. Output: `dist/FM27-Tactics-Lab-v1108.5.exe`.
-
-The build script packages the save reader from the active Python environment. The release EXE and a local build can have different hashes.
+Supply a full CPython 3.12 x64 distribution and the .NET Framework C# compiler. The output is a local desktop build; the desktop launcher asks for a game directory instead of reading Steam installation metadata.
 
 ## Validate and export source
 
 ```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
-.venv\Scripts\python.exe scripts/export_source.py
+py -3.12 -m unittest discover -s tests -v
+py -3.12 scripts/export_source.py --output dist/FM27_Local_Engine_Source.zip
 ```
 
-The exporter uses an explicit source allowlist, checks for workstation paths and common credential formats, and writes file digests inside the archive. It excludes game DLLs, runtime data, input snapshots and generated comparison bytes.
-
-The EXE release is a separate asset authorized for distribution by the maintainer. Its embedded initial inputs and comparison data are outside the MIT grant for tool code. See [third-party notices](../THIRD_PARTY_NOTICES.md).
+The exporter uses an explicit public-source allowlist, checks workstation paths and credentials, and excludes game DLLs, native binary payloads, private runtime assets, input snapshots, and generated comparison bytes.
