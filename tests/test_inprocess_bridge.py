@@ -48,11 +48,18 @@ class InProcessBridgeTests(unittest.TestCase):
             self.assertEqual(bridge._read_bridge_config(folder), (5133, token))
 
     def test_client_uses_the_listener_localhost_name_and_disables_proxies(self):
-        client = bridge._BridgeClient("C:/FM27")
-        self.assertEqual(client.base_url, f"http://localhost:{client.port}")
-        self.assertIsInstance(client.opener, type(bridge.urllib.request.build_opener(
-            bridge.urllib.request.ProxyHandler({})
-        )))
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "BepInEx" / "config"
+            config.mkdir(parents=True)
+            (config / (bridge.PLUGIN_ID + ".cfg")).write_text(
+                "[Bridge]\nPort = 5133\nToken = " + ("b" * 64) + "\n",
+                encoding="utf-8"
+            )
+            client = bridge._BridgeClient(folder)
+            self.assertEqual(client.base_url, "http://localhost:5133")
+            self.assertIsInstance(client.opener, type(bridge.urllib.request.build_opener(
+                bridge.urllib.request.ProxyHandler({})
+            )))
 
     def test_job_poll_translates_completed_bridge_job(self):
         fake = FakeClient(status={
