@@ -222,8 +222,8 @@ class DesktopWarmRunner(BatchRunner):
                             compatibility=next(r for r in header if r['event']=='native_engine_compatibility')
                             if not (compatibility.get('compatible')or compatibility.get('trial_allowed')):raise ValueError('原生关键接口检查失败')
                             if self.execution_mode=='inprocess':
-                                bootstrap=[r for r in rows if r.get('event')=='inprocess_game_startup_verified']
-                                if len(bootstrap)!=1:raise ValueError('进程内首场缺少原版启动上下文复用回执')
+                                bootstrap=[r for r in header if r.get('event')=='inprocess_game_startup_verified']
+                                if len(bootstrap)!=1:raise ValueError('进程内会话缺少原版启动上下文复用回执')
                             else:
                                 bootstrap=[r for r in rows if r['event']in['host_icu_data_initialized','native_engine_bootstrap_returned']]
                                 if len(bootstrap)!=2:raise ValueError('首场缺少真实初始化回执')
