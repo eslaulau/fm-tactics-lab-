@@ -10,6 +10,7 @@ PLUGIN = (ROOT / "integration/BepInEx/FMTL.NativeBridge/NativeBridgePlugin.cs").
 BUILDER = (ROOT / "scripts/build_native.py").read_text(encoding="utf-8")
 EXPORTER = (ROOT / "scripts/export_source.py").read_text(encoding="utf-8")
 RUNNER = (ROOT / "scripts/run.py").read_text(encoding="utf-8")
+CLIENT = (ROOT / "src/inprocess_bridge.py").read_text(encoding="utf-8")
 
 
 class InProcessBridgeSourceTests(unittest.TestCase):
@@ -50,6 +51,8 @@ class InProcessBridgeSourceTests(unittest.TestCase):
         self.assertIn("NativeWorker\", \"Enabled\", false", PLUGIN)
         self.assertIn("X-FMTL-Token", PLUGIN)
         self.assertIn("localhost", PLUGIN)
+        self.assertIn("http://localhost:{self.port}", CLIENT)
+        self.assertIn("ProxyHandler({})", CLIENT)
 
     def test_runner_requires_genuine_sdk_and_adapter_specific_bridge(self):
         self.assertIn("--execution-mode", RUNNER)
