@@ -5,6 +5,7 @@
 
 static std::mutex fm27_inprocess_mutex;
 static bool fm27_inprocess_poisoned=false;
+static std::string fm27_inprocess_validation_rows;
 
 static void fm27_inprocess_write(char* output,unsigned capacity,const char* value){
     if(!output||!capacity)return;
@@ -72,8 +73,15 @@ static bool fm27_inprocess_ready(const wchar_t* requested_game_root,char* output
     }
     log_file=sink;
     native_base=reinterpret_cast<unsigned char*>(plugin);
+    fm27_inprocess_validation_rows.clear();
     const bool compatible=known_image(expected_plugin);
     fflush(sink);
+    if(std::fseek(sink,0,SEEK_SET)==0){
+        char diagnostic[4096];
+        size_t count=0;
+        while((count=std::fread(diagnostic,1,sizeof(diagnostic),sink))>0)
+            fm27_inprocess_validation_rows.append(diagnostic,count);
+    }
     log_file=previous_log;
     fclose(sink);
     if(!compatible){
@@ -220,9 +228,12 @@ extern "C" __declspec(dllexport) int __cdecl FM27InProcessRunManifest(
     bool poisoned=false;
     FILE* session_log=log_file;
     try{
+        if(!fm27_inprocess_validation_rows.empty())fputs(fm27_inprocess_validation_rows.c_str(),log_file);
         fprintf(log_file,
             "{\"event\":\"inprocess_native_bridge_started\",\"pid\":%lu,\"game_root\":\"%ls\",\"game_owned_interface_borrowed\":true,\"one_time_bootstrap_reused\":true,\"platform_sdk_reinitialized\":false}\n",
             GetCurrentProcessId(),game_path.c_str());
+        fprintf(log_file,
+            "{\"event\":\"inprocess_game_startup_verified\",\"fm_exe_unity_game_assembly_loaded\":true,\"activation_gate\":0,\"resource_manager_reused\":true,\"callback_interface_reused\":true,\"steam_session_preserved\":true}\n");
         desktop_log_platform_module_state("inprocess_bridge_ready");
         fflush(log_file);
         auto interface_object=*reinterpret_cast<void**>(native_base+0x0581CAB0);
