@@ -14,7 +14,7 @@ class FakeClient:
     def __init__(self, status=None, run=None, failure=None):
         self.status = status or {"ok": True, "jobId": "job-1", "status": "running"}
         self.run = run or {"ok": True, "jobId": "job-1", "status": "running"}
-        self.failure = failure
+        self.failure_on_status = failure
         self.requests = []
 
     def health(self):
@@ -22,8 +22,8 @@ class FakeClient:
 
     def request(self, path, method="GET", body=None, timeout=5):
         self.requests.append((path, method, body))
-        if self.failure:
-            raise self.failure
+        if path.startswith("/status") and self.failure_on_status:
+            raise self.failure_on_status
         if path == "/run":
             return self.run
         if path.startswith("/status"):
