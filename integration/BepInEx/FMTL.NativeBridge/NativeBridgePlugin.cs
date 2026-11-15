@@ -281,9 +281,6 @@ internal static class NativeBridge
     private delegate int AbiVersionDelegate();
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate int CheckReadyDelegate(IntPtr gameRoot, IntPtr response, uint capacity);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int RunManifestDelegate(IntPtr gameRoot, IntPtr engineRoot, IntPtr manifest,
         IntPtr sessionLog, IntPtr response, uint capacity);
 
@@ -293,7 +290,6 @@ internal static class NativeBridge
     private static readonly object LoadLock = new();
     private static IntPtr _library;
     private static string? _libraryPath;
-    private static CheckReadyDelegate? _checkReady;
     private static RunManifestDelegate? _runManifest;
     private static CancelDelegate? _cancel;
 
@@ -304,14 +300,6 @@ internal static class NativeBridge
 
         using var response = new NativeBuffer(16 * 1024);
         using var game = new NativeString(gameRoot);
-        var ready = _checkReady!(game.Pointer, response.Pointer, (uint)response.Capacity);
-        var readyText = response.ReadUtf8();
-        if (ready != 0)
-        {
-            return (ready, string.IsNullOrWhiteSpace(readyText) ? "{\"ready\":false}" : readyText);
-        }
-
-        response.Clear();
         using var engine = new NativeString(Path.GetFullPath(engineRoot));
         using var manifestPath = new NativeString(Path.GetFullPath(manifest));
         using var logPath = new NativeString(Path.GetFullPath(sessionLog));
@@ -350,8 +338,6 @@ internal static class NativeBridge
             if (abi() != 1)
                 throw new InvalidOperationException("Unsupported FMTL in-process native ABI.");
 
-            _checkReady = Marshal.GetDelegateForFunctionPointer<CheckReadyDelegate>(
-                NativeLibrary.GetExport(_library, "FM27InProcessCheckReady"));
             _runManifest = Marshal.GetDelegateForFunctionPointer<RunManifestDelegate>(
                 NativeLibrary.GetExport(_library, "FM27InProcessRunManifest"));
             _cancel = Marshal.GetDelegateForFunctionPointer<CancelDelegate>(
