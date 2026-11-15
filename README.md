@@ -62,7 +62,7 @@
 当前源码版本为 **v1112**。桌面版下载见 [GitHub Releases](https://github.com/lqf0624/fm-tactics-lab/releases)，从托盘退出旧版后再启动新版。
 
 
-准备好可正常运行的 FM27，打开 Steam 并登录拥有游戏的账号，再启动桌面 EXE。工具会查找本地游戏；也可以在顶部引擎设置中，手动选择包含 `fm_Data` 和 `shared` 的游戏根目录。
+准备好本机完整的 FM27 游戏目录后，直接启动桌面 EXE。**FM Tactics Lab 不启动 Steam 或 Epic 客户端，也不通过平台客户端查找游戏**；首次运行时选择包含 `fm_Data` 和 `shared` 的游戏根目录，之后会记住该路径。源码版也可通过 `--game-root` 参数直接指定目录。游戏引擎自身导入的平台 API 仍由原生宿主进行 fail-closed 诊断；若比赛引擎实际调用了这些 API，工具会报告并停止，不会伪造登录、授权或所有权结果。
 
 EXE 自带 Python 运行环境，玩家无需安装 Python 或编译工具。双击运行后，按下面的步骤开始测试。源码构建步骤见[开发者文档](docs/DEVELOPMENT.md)。
 
