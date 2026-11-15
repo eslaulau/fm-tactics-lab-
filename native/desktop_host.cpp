@@ -162,13 +162,29 @@ static bool desktop_prepare_runtime_dll_search(){
         return false;
     }
     size_t added=0;
+    size_t platform_dependency_dirs=0;
     for(size_t index=0;index<dirs.size();index++){
         bool contains_runtime=false;
         for(const auto* name:desktop_runtime_dll_names){
             std::error_code error;
             if(fs::is_regular_file(dirs[index]/fs::path(name),error)&&!error){contains_runtime=true;break;}
         }
-        if(!contains_runtime)continue;
+        // The normal FM process is launched from the game root, so that
+        // directory participates in Windows' application-directory lookup.
+        // This host changes the default DLL search policy above; preserve the
+        // game's real companion-DLL lookup for SteamAPI without substituting
+        // or preloading a fake platform implementation.
+        bool contains_platform_dependency=false;
+        if(desktop_use_genuine_platform_apis&&!desktop_game_root.empty()){
+            std::error_code root_error;
+            auto game_root=fs::absolute(desktop_game_root,root_error);
+            if(!root_error&&dirs[index]==game_root.lexically_normal()){
+                root_error.clear();
+                contains_platform_dependency=fs::is_regular_file(
+                    dirs[index]/L"steamclient64.dll",root_error)&&!root_error;
+            }
+        }
+        if(!contains_runtime&&!contains_platform_dependency)continue;
         auto cookie=AddDllDirectory(dirs[index].c_str());
         if(!cookie){
             fprintf(log_file,"{\"event\":\"runtime_dependency_search_dir_failed\",\"index\":%zu,\"error\":%lu}\n",index,GetLastError());fflush(log_file);
@@ -176,7 +192,13 @@ static bool desktop_prepare_runtime_dll_search(){
         }
         desktop_dll_directory_cookies.push_back(cookie);
         added++;
-        fprintf(log_file,"{\"event\":\"runtime_dependency_search_dir_added\",\"index\":%zu}\n",index);fflush(log_file);
+        if(contains_runtime){
+            fprintf(log_file,"{\"event\":\"runtime_dependency_search_dir_added\",\"index\":%zu}\n",index);fflush(log_file);
+        }
+        if(contains_platform_dependency){
+            platform_dependency_dirs++;
+            fprintf(log_file,"{\"event\":\"genuine_platform_dependency_search_dir_added\",\"module\":\"steamclient64.dll\",\"index\":%zu}\n",index);fflush(log_file);
+        }
     }
     if(!added){
         fputs("{\"event\":\"runtime_dependency_search_dirs_empty\"}\n",log_file);fflush(log_file);
@@ -184,6 +206,9 @@ static bool desktop_prepare_runtime_dll_search(){
     }
     const size_t active_dependencies=sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]);
     fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu}\n",added,active_dependencies);fflush(log_file);
+    if(platform_dependency_dirs){
+        fprintf(log_file,"{\"event\":\"genuine_platform_dependency_search_ready\",\"directories\":%zu,\"modules\":[\"steamclient64.dll\"]}\n",platform_dependency_dirs);fflush(log_file);
+    }
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     if(!desktop_load_platform_probe(L"steam_api64.dll")||
        !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
@@ -699,6 +724,7 @@ static void desktop_log_platform_module_state(const char* phase){
     static const ModuleEntry modules[]={
         {L"EOSSDK-Win64-Shipping.dll","EOSSDK-Win64-Shipping.dll"},
         {L"steam_api64.dll","steam_api64.dll"},
+        {L"steamclient64.dll","steamclient64.dll"},
         {L"PartyWin.dll","PartyWin.dll"},
         {L"PlayFabMultiplayerWin.dll","PlayFabMultiplayerWin.dll"},
         {L"icuuc65.dll","icuuc65.dll"},
@@ -2106,6 +2132,9 @@ static int child(bool run_match){
     fprintf(log_file,"{\"event\":\"windows_load_returned\",\"success\":%s,\"error\":%lu}\n",module?"true":"false",GetLastError());fflush(log_file);
     if(!module)return 81;
     native_base=(unsigned char*)module;
+    // Capture the companion module loaded by the authentic SteamAPI path.
+    // This is diagnostic only; the host never fabricates or initializes a session.
+    desktop_log_platform_module_state("after_game_plugin_load");
     desktop_log_thread_snapshot("after_windows_load");
     desktop_scan_steamapi_windows("after_windows_load");
     if(!desktop_verify_platform_stubs())return 96;
