@@ -50,7 +50,7 @@ Each batch uses a sequence of random seeds. When comparing a saved reference wit
 
 The current source version is **v1112**. Download published desktop builds from [GitHub Releases](https://github.com/lqf0624/fm-tactics-lab/releases). Exit the previous app from its tray menu before launching an update.
 
-Install FM27, open Steam and sign in to the account that owns the game, then launch the EXE. The tool looks for your installation automatically. You can also select the game root containing `fm_Data` and `shared` in the engine settings at the top.
+Prepare the complete local FM27 game directory and launch the EXE directly. **FM Tactics Lab does not start Steam or Epic clients and does not search for the game through a storefront client**; on first launch, select the game root containing `fm_Data` and `shared`. The selected path is remembered. The source runner also accepts `--game-root`. Platform APIs imported by the game engine remain behind fail-closed diagnostics: if the engine actually calls one, the host reports the call and stops rather than fabricating login, authorization, or ownership results.
 
 The EXE includes its Python runtime. Players do not need Python or a compiler. The interface follows the Windows display language and supports Chinese and English. Source setup is described in the [developer guide](docs/DEVELOPMENT.md).
 
