@@ -79,8 +79,8 @@ def select_adapter(registry, dll_sha256, requested=None):
     if not active:
         raise ValueError('没有已启用的原生引擎适配器')
     raise ValueError(
-        '本机 game_plugin.dll 未匹配已登记的构建。多适配器环境下请通过 FM27_ENGINE_ADAPTER 明确选择；'
-        '不要把 Epic DLL 自动套用 Steam 的地址配置。'
+        '本机 game_plugin.dll 未匹配已登记的本地引擎构建。请核对游戏版本并使用对应的构建配置；'
+        '不同构建的 RVA、导入表和 ABI 不可混用。'
     )
 
 
