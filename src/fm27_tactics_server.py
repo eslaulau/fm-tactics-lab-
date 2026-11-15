@@ -38,6 +38,13 @@ ROOT = Path(os.environ["FM27_ENGINE_ROOT"])
 WEB = Path(__file__).resolve().parent / 'tactics_ui'
 RUNS = Path(os.environ['FM27_DESKTOP_DATA']) / 'runs'
 RUNS.mkdir(parents=True,exist_ok=True)
+EXECUTION_MODE_FILE = RUNS.parent / 'native-execution-mode.txt'
+if not os.environ.get('FM27_NATIVE_EXECUTION_MODE') and EXECUTION_MODE_FILE.is_file():
+    saved_mode=EXECUTION_MODE_FILE.read_text(encoding='utf8').strip().lower()
+    if saved_mode in ('isolated','inprocess'):
+        os.environ['FM27_NATIVE_EXECUTION_MODE']=saved_mode
+if os.environ.get('FM27_NATIVE_EXECUTION_MODE','isolated').strip().lower()=='inprocess':
+    os.environ['FM27_PLATFORM_API_MODE']='genuine'
 NATIVE = ROOT / 'fm27_native'
 import desktop_engine
 ENGINE_COMPATIBILITY = desktop_engine.initialize(ROOT)
@@ -901,6 +908,35 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'team':team,'source':{**opponent,'match_roster_count':team.get('roster_size',len(team['players'])),'roster_pending':False}})
                 if path=='/api/save/run': return self.send(create_save_job(data),202)
             if path=='/api/desktop-presence':return self.send(DESKTOP_PRESENCE.update(data))
+            if path=='/api/engine/mode':
+                global ENGINE_COMPATIBILITY,ENGINE_DLL_SHA256
+                selected=data.get('mode')
+                if selected not in ('isolated','inprocess'):
+                    raise ValueError('比赛执行方式必须是 isolated 或 inprocess')
+                with IMPORT_LOCK,LOCK:
+                    if SAVE_LIBRARY.real_active:return self.send({'error':'真实AI战术生成中不能更换执行方式'},409)
+                    if SAVE_LIBRARY.active:raise ValueError('存档／历史输入解析中不能更换执行方式')
+                    if any(j['status']in ('queued','running')for j in JOBS.values()):
+                        return self.send({'error':'比赛运行中不能更换执行方式'},409)
+                    previous_mode=os.environ.get('FM27_NATIVE_EXECUTION_MODE')
+                    previous_platform=os.environ.get('FM27_PLATFORM_API_MODE')
+                    os.environ['FM27_NATIVE_EXECUTION_MODE']=selected
+                    os.environ['FM27_PLATFORM_API_MODE']='genuine' if selected=='inprocess' else 'diagnostic'
+                    status=desktop_engine.initialize(ROOT)
+                    if not status.get('can_simulate'):
+                        if previous_mode is None:os.environ.pop('FM27_NATIVE_EXECUTION_MODE',None)
+                        else:os.environ['FM27_NATIVE_EXECUTION_MODE']=previous_mode
+                        if previous_platform is None:os.environ.pop('FM27_PLATFORM_API_MODE',None)
+                        else:os.environ['FM27_PLATFORM_API_MODE']=previous_platform
+                        ENGINE_COMPATIBILITY=desktop_engine.initialize(ROOT)
+                        ENGINE_DLL_SHA256=ENGINE_COMPATIBILITY.get('actual_dll_sha256')
+                        return self.send({'error':status.get('message','执行方式检查失败'),'diagnostics':status},409)
+                    ENGINE_COMPATIBILITY=status
+                    ENGINE_DLL_SHA256=status.get('actual_dll_sha256')
+                    try:EXECUTION_MODE_FILE.write_text(selected+'\\n',encoding='utf8')
+                    except OSError as error:
+                        status['execution_mode_persistence_warning']='执行方式已切换，但无法写入本地设置：'+str(error)
+                    return self.send(status)
             if path=='/api/engine/select':
                 global ENGINE_COMPATIBILITY,ENGINE_DLL_SHA256
                 selected=data.get('path')
