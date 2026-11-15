@@ -92,15 +92,17 @@ def _adapter_paths(native, spec):
     executable = adapter_root / 'FM27Simulator.exe'
     profile = adapter_root / 'engine_compat_profile.json'
     version = adapter_root / 'adapter_version.json'
-    return adapter_root, executable, profile, version
+    inprocess = adapter_root / 'FM27InProcessNative.dll'
+    return adapter_root, executable, profile, version, inprocess
 
 
-def _stage_legacy_entrypoints(native, executable, profile, version):
+def _stage_legacy_entrypoints(native, executable, profile, version, inprocess=None):
     """Keep old FMTL worker call sites on the selected adapter without rewriting them."""
     destinations = (
         (executable, Path(native) / 'FM27Simulator.exe'),
         (profile, Path(native) / 'engine_compat_profile.json'),
         (version, Path(native) / 'adapter_version.json'),
+        (inprocess, Path(native) / 'FM27InProcessNative.dll'),
     )
     for source, target in destinations:
         if source is None or not Path(source).is_file():
@@ -138,6 +140,11 @@ def initialize(root):
     plugins = game / 'fm_Data/Plugins/x86_64' if game_root is not None else native / 'libs'
     dll = plugins / 'game_plugin.dll' if game_root is not None else native / 'game_plugin.dll'
     platform_api_mode = os.environ.get('FM27_PLATFORM_API_MODE', 'diagnostic').strip().lower() or 'diagnostic'
+    execution_mode = os.environ.get('FM27_NATIVE_EXECUTION_MODE', 'isolated').strip().lower() or 'isolated'
+    if execution_mode not in ('isolated', 'inprocess'):
+        return {'policy': 'graded-adapter-compatibility-v2', 'compatible': False,
+                'can_simulate': False, 'reason': 'invalid_execution_mode',
+                'message': 'FM27_NATIVE_EXECUTION_MODE 必须是 isolated 或 inprocess。'}
     runtime = resolve_runtime_dlls(game_root, native, platform_api_mode=platform_api_mode)
     files = {
         'game_plugin.dll': dll,
@@ -167,6 +174,7 @@ def initialize(root):
         'runtime_dlls': runtime_paths,
         'platform_stubs': {name: str(path) for name, path in sorted(runtime['platform_stubs'].items())},
         'platform_api_mode': platform_api_mode,
+        'native_execution_mode': execution_mode,
         'platform_probe_mode': platform_api_mode == 'diagnostic',
         'offline_platform_boundary': platform_api_mode == 'diagnostic',
         'platform_probes': {name: str(path) for name, path in sorted(runtime['platform_probes'].items())},
@@ -207,9 +215,10 @@ def initialize(root):
             executable = native / 'FM27Simulator.exe'
             profile_path = native / 'engine_compat_profile.json'
             version_path = native / 'adapter_version.json'
+            inprocess_path = native / 'FM27InProcessNative.dll'
         else:
             spec, adapter_selection = select_adapter(registry, actual, requested)
-            _, executable, profile_path, version_path = _adapter_paths(native, spec)
+            _, executable, profile_path, version_path, inprocess_path = _adapter_paths(native, spec)
             # Backward-compatible staging lets the existing batch worker,
             # provenance and diagnostics keep using fm27_native/FM27Simulator.exe.
             if not executable.is_file() or not profile_path.is_file() or not version_path.is_file():
@@ -217,6 +226,7 @@ def initialize(root):
                     executable = native / 'FM27Simulator.exe'
                     profile_path = native / 'engine_compat_profile.json'
                     version_path = native / 'adapter_version.json'
+                    inprocess_path = native / 'FM27InProcessNative.dll'
             if not executable.is_file() or not profile_path.is_file() or not version_path.is_file():
                 close_leases()
                 return {
@@ -225,6 +235,23 @@ def initialize(root):
                     'adapter_id': spec['id'],
                     'message': f'适配器 {spec["id"]} 尚未构建。请使用 scripts\\build_native.py --adapter {spec["id"]} 重新构建。'
                 }
+        if execution_mode == 'inprocess' and not inprocess_path.is_file():
+            close_leases()
+            return {**status, 'reason': 'inprocess_native_bridge_missing',
+                    'message': '所选原生适配器尚未构建 FM27InProcessNative.dll，请重新运行 scripts\\build_native.py。'}
+        if execution_mode == 'inprocess':
+            if game_root is None:
+                close_leases()
+                return {**status, 'reason': 'inprocess_game_root_missing',
+                        'message': '进程内模式需要有效的 FM27 游戏目录。'}
+            try:
+                from inprocess_bridge import bridge_health
+                bridge_status = bridge_health(game_root)
+            except Exception as error:
+                close_leases()
+                return {**status, 'reason': 'inprocess_bridge_unavailable',
+                        'message': 'FM27 进程内桥接尚未就绪：' + str(error)}
+            status['inprocess_bridge'] = bridge_status
         if spec is not None:
             selected_profile = json.loads(profile_path.read_text(encoding='utf8'))
             selected_version = json.loads(version_path.read_text(encoding='utf8'))
@@ -245,7 +272,8 @@ def initialize(root):
             adapter_distribution=spec.get('distribution') if spec else 'legacy',
             adapter_selection=adapter_selection,
             adapter_reference_sha256=spec.get('reference_sha256') if spec else None,
-            native_host_path=str(executable.resolve())
+            native_host_path=str(executable.resolve()),
+            native_inprocess_path=str(inprocess_path.resolve()) if inprocess_path.is_file() else None
         )
 
         env = os.environ.copy()
@@ -294,7 +322,8 @@ def initialize(root):
         fingerprint = hashlib.sha256(
             json.dumps(entries, sort_keys=True, separators=(',', ':')).encode()
         ).hexdigest()
-        _stage_legacy_entrypoints(native, executable, profile_path, version_path)
+        _stage_legacy_entrypoints(native, executable, profile_path, version_path,
+                                  inprocess_path if execution_mode == 'inprocess' else None)
         os.environ['FM27_EXPECTED_DLL_SHA256'] = actual
         verified = bool(validation.get('compatible'))
         status.update(
