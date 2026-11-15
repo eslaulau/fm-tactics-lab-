@@ -62,6 +62,7 @@ static int fm27_locked_fflush(FILE* stream){
 namespace fs=std::filesystem;
 static fs::path bundle,fixture,output;
 static fs::path desktop_game_root;
+static bool desktop_use_genuine_platform_apis=false;
 static std::vector<DLL_DIRECTORY_COOKIE> desktop_dll_directory_cookies;
 static std::vector<HMODULE> desktop_platform_stub_modules;
 static fs::path dump_input;
@@ -182,11 +183,12 @@ static bool desktop_prepare_runtime_dll_search(){
         return false;
     }
     const size_t active_dependencies=sizeof(desktop_runtime_dll_names)/sizeof(desktop_runtime_dll_names[0]);
-    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu,\"offline_platform_boundary\":true}\n",added,active_dependencies);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"runtime_dependency_search_ready\",\"directories\":%zu,\"dependencies\":%zu}\n",added,active_dependencies);fflush(log_file);
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     if(!desktop_load_platform_probe(L"steam_api64.dll")||
        !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
-    fputs("{\"event\":\"offline_platform_boundary_enabled\",\"steam_login_required\":false,\"platform_success_faked\":false}\n",log_file);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"platform_api_policy\",\"mode\":\"%s\",\"storefront_client_started\":false,\"platform_success_faked\":false}\n",
+        desktop_use_genuine_platform_apis?"genuine":"diagnostic");fflush(log_file);
     return true;
 }
 static bool desktop_load_platform_stub(const wchar_t* name){
@@ -210,23 +212,58 @@ static bool desktop_load_platform_stub(const wchar_t* name){
     return true;
 }
 static bool desktop_load_platform_probe(const wchar_t* name){
-    auto path=bundle/L"platform-probes"/name;
+    fs::path path;
     std::error_code error;
-    if(!fs::is_regular_file(path,error)||error){
-        fprintf(log_file,"{\"event\":\"platform_probe_missing\",\"name\":\"%ls\"}\n",name);fflush(log_file);
-        return false;
+    if(desktop_use_genuine_platform_apis){
+        if(desktop_game_root.empty()){
+            fprintf(log_file,"{\"event\":\"platform_api_game_root_missing\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+            return false;
+        }
+        const fs::path candidates[]={
+            desktop_game_root/L"fm_Data/Plugins/x86_64",
+            desktop_game_root/L"fm_Data/Plugins",
+            desktop_game_root/L"fm_Data",
+            desktop_game_root
+        };
+        std::vector<fs::path> matches;
+        for(const auto& directory:candidates){
+            auto candidate=directory/fs::path(name);
+            error.clear();
+            if(fs::is_regular_file(candidate,error)&&!error)matches.push_back(candidate);
+        }
+        if(matches.empty()){
+            fprintf(log_file,"{\"event\":\"platform_api_genuine_dll_missing\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+            return false;
+        }
+        for(size_t i=1;i<matches.size();i++){
+            error.clear();
+            if(!fs::equivalent(matches.front(),matches[i],error)||error){
+                fprintf(log_file,"{\"event\":\"platform_api_genuine_dll_ambiguous\",\"name\":\"%ls\",\"copies\":%zu}\n",
+                    name,matches.size());fflush(log_file);
+                return false;
+            }
+        }
+        path=matches.front();
+    }else{
+        path=bundle/L"platform-probes"/name;
+        error.clear();
+        if(!fs::is_regular_file(path,error)||error){
+            fprintf(log_file,"{\"event\":\"platform_probe_missing\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+            return false;
+        }
     }
-    auto module=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto module=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_USER_DIRS);
     if(!module){
-        fprintf(log_file,"{\"event\":\"platform_probe_load_failed\",\"name\":\"%ls\",\"error\":%lu}\n",name,GetLastError());fflush(log_file);
+        fprintf(log_file,"{\"event\":\"platform_api_module_load_failed\",\"name\":\"%ls\",\"error\":%lu}\n",name,GetLastError());fflush(log_file);
         return false;
     }
     if(GetModuleHandleW(name)!=module){
-        fprintf(log_file,"{\"event\":\"platform_probe_module_identity_mismatch\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+        fprintf(log_file,"{\"event\":\"platform_api_module_identity_mismatch\",\"name\":\"%ls\"}\n",name);fflush(log_file);
         return false;
     }
     desktop_platform_probe_modules.push_back(module);
-    fprintf(log_file,"{\"event\":\"platform_probe_preloaded\",\"name\":\"%ls\"}\n",name);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"platform_api_module_preloaded\",\"mode\":\"%s\",\"name\":\"%ls\"}\n",
+        desktop_use_genuine_platform_apis?"genuine":"diagnostic",name);fflush(log_file);
     return true;
 }
 
@@ -271,10 +308,10 @@ static bool desktop_verify_platform_probe_modules(){
     for(size_t i=0;i<2;i++){
         auto actual=GetModuleHandleW(names[i]);
         if(actual!=desktop_platform_probe_modules[i]){
-            fprintf(log_file,"{\"event\":\"platform_probe_binding_mismatch\",\"name\":\"%ls\"}\n",names[i]);fflush(log_file);
+            fprintf(log_file,"{\"event\":\"platform_api_module_binding_mismatch\",\"name\":\"%ls\"}\n",names[i]);fflush(log_file);
             return false;
         }
-        fprintf(log_file,"{\"event\":\"platform_probe_binding_verified\",\"name\":\"%ls\"}\n",names[i]);fflush(log_file);
+        fprintf(log_file,"{\"event\":\"platform_api_module_binding_verified\",\"name\":\"%ls\"}\n",names[i]);fflush(log_file);
     }
     return true;
 }
@@ -289,12 +326,12 @@ static bool desktop_verify_platform_probe_iat(){
         const auto result=fm27_platform_boundary::verify_named_imports(
             reinterpret_cast<HMODULE>(native_base),target.module,target.dll,target.count);
         if(!result.ok()){
-            fprintf(log_file,"{\"event\":\"platform_probe_iat_verification_failed\",\"module\":\"%s\",\"reason\":\"%s\",\"expected\":%zu,\"actual\":%zu}\n",
+            fprintf(log_file,"{\"event\":\"platform_api_iat_verification_failed\",\"module\":\"%s\",\"reason\":\"%s\",\"expected\":%zu,\"actual\":%zu}\n",
                     target.dll,fm27_platform_boundary::error_name(result.error),target.count,result.actual);
             fflush(log_file);
             return false;
         }
-        fprintf(log_file,"{\"event\":\"platform_probe_iat_verified\",\"module\":\"%s\",\"imports\":%zu}\n",
+        fprintf(log_file,"{\"event\":\"platform_api_iat_verified\",\"module\":\"%s\",\"imports\":%zu}\n",
                 target.dll,result.actual);
     }
     fflush(log_file);
@@ -2049,7 +2086,8 @@ static int child(bool run_match){
     wchar_t image[MAX_PATH];
     wcscpy_s(image,(desktop_game_root.empty()?bundle/L"game_plugin.dll":desktop_game_root/L"fm_Data/Plugins/x86_64/game_plugin.dll").c_str());
     if(!known_image(image)){fprintf(log_file,"{\"event\":\"unsupported_engine_compatibility\"}\n");fflush(log_file);return 99;}
-    fputs("{\"event\":\"headless_offline_platform_policy\",\"steam_login_required\":false,\"platform_success_faked\":false,\"real_steam_eos_loaded\":false}\n",log_file);fflush(log_file);
+    fprintf(log_file,"{\"event\":\"headless_platform_api_policy\",\"mode\":\"%s\",\"storefront_client_started\":false,\"platform_success_faked\":false}\n",
+        desktop_use_genuine_platform_apis?"genuine":"diagnostic");fflush(log_file);
     if(!SetEnvironmentVariableW(L"FM27_PLATFORM_STUB_LOG",output.c_str())){
         fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
     }
@@ -2112,6 +2150,12 @@ int wmain(int argc,wchar_t** argv){
     wchar_t desktop_env[32768]={};
     if(GetEnvironmentVariableW(L"FM27_ENGINE_ROOT",desktop_env,32768))bundle=fs::path(desktop_env)/L"fm27_native";
     if(GetEnvironmentVariableW(L"FM27_GAME_ROOT",desktop_env,32768))desktop_game_root=desktop_env;
+    wchar_t platform_api_mode[64]={};
+    if(GetEnvironmentVariableW(L"FM27_PLATFORM_API_MODE",platform_api_mode,64)){
+        if(_wcsicmp(platform_api_mode,L"genuine")==0)desktop_use_genuine_platform_apis=true;
+        else if(_wcsicmp(platform_api_mode,L"diagnostic")==0)desktop_use_genuine_platform_apis=false;
+        else{fputs("Invalid FM27_PLATFORM_API_MODE; use diagnostic or genuine\\n",stderr);return 78;}
+    }
     wchar_t desktop_mode[64]={};
     if(GetEnvironmentVariableW(L"FM27_NATIVE_DESKTOP_MODE",desktop_mode,64)){
         if(_wcsicmp(desktop_mode,L"shared")==0)desktop_use_private_desktop=false;
