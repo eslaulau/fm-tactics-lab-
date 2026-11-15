@@ -31,6 +31,8 @@ class InProcessBridgeSourceTests(unittest.TestCase):
         self.assertIn("game_interface_released", HOST)
         self.assertIn("desktop_tls_value_guard", HOST)
         self.assertIn("tls_context_restored", HOST)
+        batch = (ROOT / "src/desktop_warm_batch.py").read_text(encoding="utf-8")
+        self.assertIn("bootstrap=[r for r in header if r.get('event')=='inprocess_game_startup_verified']", batch)
 
     def test_readiness_requires_real_fm_runtime_and_initialized_globals(self):
         for name in ("fm.exe", "UnityPlayer.dll", "GameAssembly.dll", "game_plugin.dll",
