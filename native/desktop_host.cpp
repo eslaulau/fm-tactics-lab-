@@ -209,6 +209,10 @@ static bool desktop_prepare_runtime_dll_search(){
     if(platform_dependency_dirs){
         fprintf(log_file,"{\"event\":\"genuine_platform_dependency_search_ready\",\"directories\":%zu,\"modules\":[\"steamclient64.dll\"]}\n",platform_dependency_dirs);fflush(log_file);
     }
+    else if(desktop_use_genuine_platform_apis&&!desktop_game_root.empty()){
+        const auto game_root_json=desktop_json_string(desktop_game_root.wstring());
+        fprintf(log_file,"{\"event\":\"genuine_platform_dependency_missing\",\"module\":\"steamclient64.dll\",\"game_root\":%s}\n",game_root_json.c_str());fflush(log_file);
+    }
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     if(!desktop_load_platform_probe(L"steam_api64.dll")||
        !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
