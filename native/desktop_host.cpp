@@ -1466,7 +1466,8 @@ static int native_match(void* interface_object){
     struct {void* match;uint64_t flags;} match_thread_context={match,0};
     struct desktop_tls_value_guard {
         void** slot; void* previous;
-        ~desktop_tls_value_guard(){if(slot)*slot=previous;}
+        void restore(){if(slot){*slot=previous;slot=nullptr;}}
+        ~desktop_tls_value_guard(){restore();}
     } tls_context_guard{reinterpret_cast<void**>(tls+0x838),*(void**)(tls+0x838)};
     *(void**)(tls+0x838)=&match_thread_context;
     auto accepted=((unsigned char(*)(void*,void*,void*,unsigned int))at(0x4bab520))(match,&reference,interface_object,0);
@@ -1578,7 +1579,8 @@ static int native_match(void* interface_object){
                 ((void(*)(void*))at(0x4ba6800))(match);
                 ((void(*)(void*))at(0xad9390))(match);
                 release_ref(recording_file);
-                // tls_context_guard restores the worker thread's previous context on return.
+                // Restore the worker thread's previous context before the release receipt is committed.
+                tls_context_guard.restore();
                 DWORD handles=0;GetProcessHandleCount(GetCurrentProcess(),&handles);
                 fprintf(log_file,"{\"event\":\"original_match_release_completed\",\"tls_context_restored\":true,\"game_interface_released\":%s,\"process_handles\":%lu}\n",desktop_in_process_mode?"false":"true",handles);fflush(log_file);
                 return 0;
