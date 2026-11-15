@@ -137,7 +137,8 @@ def initialize(root):
     game = game_root if game_root is not None else native
     plugins = game / 'fm_Data/Plugins/x86_64' if game_root is not None else native / 'libs'
     dll = plugins / 'game_plugin.dll' if game_root is not None else native / 'game_plugin.dll'
-    runtime = resolve_runtime_dlls(game_root, native)
+    platform_api_mode = os.environ.get('FM27_PLATFORM_API_MODE', 'diagnostic').strip().lower() or 'diagnostic'
+    runtime = resolve_runtime_dlls(game_root, native, platform_api_mode=platform_api_mode)
     files = {
         'game_plugin.dll': dll,
         'icudt65l.dat': game / 'icudt65l.dat',
@@ -150,6 +151,8 @@ def initialize(root):
         files['platform-stubs/' + name] = path
     for name, path in runtime['platform_probes'].items():
         files['platform-probes/' + name] = path
+    for name, path in runtime['platform_api_modules'].items():
+        files['platform-api/' + name] = path
     runtime_dirs = [str(path) for path in runtime['search_dirs']]
     runtime_paths = {name: str(path) for name, path in sorted(runtime['found'].items())}
     status = {
@@ -163,9 +166,11 @@ def initialize(root):
         'runtime_search_dirs': runtime_dirs,
         'runtime_dlls': runtime_paths,
         'platform_stubs': {name: str(path) for name, path in sorted(runtime['platform_stubs'].items())},
-        'platform_probe_mode': True,
-        'offline_platform_boundary': True,
+        'platform_api_mode': platform_api_mode,
+        'platform_probe_mode': platform_api_mode == 'diagnostic',
+        'offline_platform_boundary': platform_api_mode == 'diagnostic',
         'platform_probes': {name: str(path) for name, path in sorted(runtime['platform_probes'].items())},
+        'platform_api_modules': {name: str(path) for name, path in sorted(runtime['platform_api_modules'].items())},
         'whole_file_sha_is_admission_gate': False,
         'whole_engine_behavior_equivalence_proven': False
     }
@@ -174,12 +179,15 @@ def initialize(root):
         missing.extend('libs/' + name for name in runtime['missing'])
         missing.extend('platform-stubs/' + name for name in runtime['missing_platform_stubs'])
         missing.extend('platform-probes/' + name for name in runtime['missing_platform_probes'])
+        missing.extend('platform-api/' + name for name in runtime['missing_platform_api_modules'])
         if missing:
             return {**status, 'reason': 'missing_resources', 'missing_files': missing,
                     'message': '请选择完整的游戏安装目录；缺少：' + ', '.join(missing)}
-        if runtime['ambiguous']:
+        if runtime['ambiguous'] or runtime['ambiguous_platform_api_modules']:
+            all_ambiguous = dict(runtime['ambiguous'])
+            all_ambiguous.update(runtime['ambiguous_platform_api_modules'])
             ambiguous = {name: [str(path) for path in paths]
-                         for name, paths in sorted(runtime['ambiguous'].items())}
+                         for name, paths in sorted(all_ambiguous.items())}
             names = ', '.join(sorted(ambiguous))
             return {**status, 'reason': 'ambiguous_runtime_dlls', 'ambiguous_runtime_dlls': ambiguous,
                     'message': '多个目录存在不同版本的同名运行库，拒绝不确定加载：' + names}
