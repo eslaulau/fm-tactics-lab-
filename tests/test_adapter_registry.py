@@ -12,11 +12,11 @@ from desktop_engine import load_adapter_registry, select_adapter, _adapter_paths
 from generate_profile import adapter_spec
 
 REGISTRY = ROOT / 'native' / 'adapter_registry.json'
-STEAM_ID = 'steam_27_0_1_2494687'
-STEAM_SHA = 'f79b0a3413dd0e3f461b0afbc3ff397003f4a26d7525a30717428de6a8b91196'
+LOCAL_ID = 'local_27_0_1_2494687'
+LOCAL_SHA = 'f79b0a3413dd0e3f461b0afbc3ff397003f4a26d7525a30717428de6a8b91196'
 
 
-class NativeAdapterRegistryTests(unittest.TestCase):
+class NativeBuildRegistryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -26,83 +26,81 @@ class NativeAdapterRegistryTests(unittest.TestCase):
         (self.native / 'adapter_registry.json').write_text(
             json.dumps(self.registry), encoding='utf8')
 
-    def test_current_steam_adapter_is_the_default_and_exact_reference(self):
+    def test_default_profile_is_local_and_matches_the_reference_binary(self):
         loaded = load_adapter_registry(self.native)
-        self.assertEqual(loaded['default_adapter'], STEAM_ID)
-        spec, selection = select_adapter(loaded, STEAM_SHA)
-        self.assertEqual(spec['id'], STEAM_ID)
+        self.assertEqual(loaded['default_adapter'], LOCAL_ID)
+        self.assertEqual(len(loaded['adapters']), 1)
+        spec, selection = select_adapter(loaded, LOCAL_SHA)
+        self.assertEqual(spec['id'], LOCAL_ID)
+        self.assertEqual(spec['distribution'], 'local')
         self.assertEqual(selection, 'exact_sha256')
-        self.assertEqual(spec['distribution'], 'steam')
 
-    def test_epic_slot_is_reserved_but_not_buildable_without_reference(self):
-        epic = next(item for item in self.registry['adapters'] if item['id'] == 'epic_27_0_1')
-        self.assertFalse(epic['enabled'])
-        self.assertIsNone(epic['reference_sha256'])
-        with self.assertRaisesRegex(ValueError, 'not ready'):
-            adapter_spec('epic_27_0_1')
-        with self.assertRaisesRegex(ValueError, '尚未准备好'):
-            select_adapter(self.registry, STEAM_SHA, 'epic_27_0_1')
-
-    def test_known_disabled_distribution_never_falls_back_to_the_steam_adapter(self):
-        registry = json.loads(json.dumps(self.registry))
-        epic = next(item for item in registry['adapters'] if item['id'] == 'epic_27_0_1')
-        epic['reference_sha256'] = '2' * 64
-        with self.assertRaisesRegex(ValueError, '尚未启用'):
-            select_adapter(registry, '2' * 64)
-
-    def test_explicit_adapter_selection_is_supported_for_compatibility_trials(self):
-        spec, selection = select_adapter(self.registry, '0' * 64, STEAM_ID)
-        self.assertEqual(spec['id'], STEAM_ID)
+    def test_explicit_profile_selection_is_supported_for_version_trials(self):
+        spec, selection = select_adapter(self.registry, '0' * 64, LOCAL_ID)
+        self.assertEqual(spec['id'], LOCAL_ID)
         self.assertEqual(selection, 'explicit')
 
-    def test_unknown_hash_uses_single_enabled_adapter_candidate(self):
+    def test_unknown_hash_uses_the_single_local_build_candidate(self):
         spec, selection = select_adapter(self.registry, '0' * 64)
-        self.assertEqual(spec['id'], STEAM_ID)
+        self.assertEqual(spec['id'], LOCAL_ID)
         self.assertEqual(selection, 'single_adapter_compatibility_candidate')
 
-    def test_unknown_hash_is_ambiguous_when_multiple_adapters_are_enabled(self):
+    def test_unknown_hash_is_ambiguous_when_multiple_build_profiles_are_enabled(self):
         second = {
-            'id': 'test_second',
-            'distribution': 'test',
+            'id': 'local_test_next_build',
+            'distribution': 'local',
             'enabled': True,
             'reference_sha256': '1' * 64,
             'profile_metadata': 'profile_metadata.json',
             'version_metadata': 'adapter_version.json',
-            'output_directory': 'adapters/test_second'
+            'output_directory': 'adapters/local_test_next_build'
         }
         registry = dict(self.registry)
         registry['adapters'] = [dict(self.registry['adapters'][0]), second]
         with self.assertRaisesRegex(ValueError, '明确选择'):
             select_adapter(registry, '0' * 64)
 
-    def test_exact_hash_wins_even_when_another_adapter_is_enabled(self):
+    def test_exact_hash_wins_when_multiple_build_profiles_are_enabled(self):
         second = {
-            'id': 'test_second',
-            'distribution': 'test',
+            'id': 'local_test_next_build',
+            'distribution': 'local',
             'enabled': True,
             'reference_sha256': '1' * 64,
             'profile_metadata': 'profile_metadata.json',
             'version_metadata': 'adapter_version.json',
-            'output_directory': 'adapters/test_second'
+            'output_directory': 'adapters/local_test_next_build'
         }
         registry = dict(self.registry)
         registry['adapters'] = [dict(self.registry['adapters'][0]), second]
         spec, selection = select_adapter(registry, '1' * 64)
-        self.assertEqual(spec['id'], 'test_second')
+        self.assertEqual(spec['id'], 'local_test_next_build')
         self.assertEqual(selection, 'exact_sha256')
 
-    def test_adapter_output_path_cannot_escape_the_native_bundle(self):
+    def test_known_disabled_build_does_not_fall_back_to_another_profile(self):
+        registry = json.loads(json.dumps(self.registry))
+        registry['adapters'].append({
+            'id': 'local_disabled_build',
+            'distribution': 'local',
+            'enabled': False,
+            'reference_sha256': '2' * 64,
+            'output_directory': 'adapters/local_disabled_build',
+            'reason': 'This local binary build has not been validated.'
+        })
+        with self.assertRaisesRegex(ValueError, '尚未启用'):
+            select_adapter(registry, '2' * 64)
+
+    def test_profile_output_path_cannot_escape_the_native_bundle(self):
         spec = dict(self.registry['adapters'][0])
         spec['output_directory'] = '../outside'
         with self.assertRaisesRegex(ValueError, '不安全'):
             _adapter_paths(self.native, spec)
 
     def test_registered_profile_and_version_metadata_agree(self):
-        _, spec, metadata, version = adapter_spec(STEAM_ID)
-        self.assertEqual(spec['reference_sha256'], STEAM_SHA)
-        self.assertEqual(metadata['reference_sha256'], STEAM_SHA)
+        _, spec, metadata, version = adapter_spec(LOCAL_ID)
+        self.assertEqual(spec['reference_sha256'], LOCAL_SHA)
+        self.assertEqual(metadata['reference_sha256'], LOCAL_SHA)
         self.assertEqual(metadata['activation_flag_rva'], 0x1718f818)
-        self.assertEqual(version['reference_dll_sha256'], STEAM_SHA)
+        self.assertEqual(version['reference_dll_sha256'], LOCAL_SHA)
 
 
 if __name__ == '__main__':
