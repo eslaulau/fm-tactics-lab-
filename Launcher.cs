@@ -32,16 +32,27 @@ internal static class Program {
         using(var dialog=new FolderBrowserDialog()){dialog.Description=L("请选择已有的 FmEngine 工具目录（包含 fm27_native 文件夹），不是游戏安装目录。","Select the FmEngine tool folder containing fm27_native.");if(dialog.ShowDialog()!=DialogResult.OK||!IsEngine(dialog.SelectedPath))throw new Exception(L("未选择有效的引擎工具目录。","No valid engine tool folder selected."));return dialog.SelectedPath;}
     }
     static string FindGame(string[] args){
-        string saved=Path.Combine(dataRoot,"game-root.txt");var candidates=new System.Collections.Generic.List<string>{GetArg(args,"--game-root"),Environment.GetEnvironmentVariable("FM27_GAME_ROOT"),File.Exists(saved)?File.ReadAllText(saved).Trim():null};
-        foreach(string path in candidates)if(!String.IsNullOrWhiteSpace(path)){File.WriteAllText(saved,path,Encoding.UTF8);return path;}
-        candidates.Clear();string steam=null;
-        try{steam=Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam","SteamPath",null)as string;}
-        catch(System.Security.SecurityException){}catch(UnauthorizedAccessException){}catch(IOException){}
-        if(!String.IsNullOrEmpty(steam)){candidates.Add(Path.Combine(steam,@"steamapps\common\Football Manager 27"));string vdf=Path.Combine(steam,@"steamapps\libraryfolders.vdf");if(File.Exists(vdf))foreach(System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(vdf),"\"path\"\\s+\"([^\"]+)\""))candidates.Add(Path.Combine(match.Groups[1].Value.Replace("\\\\","\\"),@"steamapps\common\Football Manager 27"));}
-        foreach(var drive in DriveInfo.GetDrives())if(drive.IsReady)candidates.Add(Path.Combine(drive.RootDirectory.FullName,@"SteamLibrary\steamapps\common\Football Manager 27"));
-        foreach(string path in candidates)if(!String.IsNullOrEmpty(path)&&File.Exists(Path.Combine(path,@"fm_Data\Plugins\x86_64\game_plugin.dll"))){File.WriteAllText(saved,path,Encoding.UTF8);return path;}
+        string saved=Path.Combine(dataRoot,"game-root.txt");
+        string[] candidates={GetArg(args,"--game-root"),Environment.GetEnvironmentVariable("FM27_GAME_ROOT"),File.Exists(saved)?File.ReadAllText(saved).Trim():null};
+        foreach(string path in candidates){
+            if(String.IsNullOrWhiteSpace(path))continue;
+            string full;
+            try{full=Path.GetFullPath(path.Trim());}
+            catch(ArgumentException){continue;}
+            catch(NotSupportedException){continue;}
+            if(Directory.Exists(full)){File.WriteAllText(saved,full,Encoding.UTF8);return full;}
+        }
         if(Has(args,"--self-test")||Has(args,"--test-lifecycle"))return "";
-        using(var dialog=new FolderBrowserDialog()){dialog.Description=L("选择本地 FM27 游戏安装目录；也可取消，进入工具后再设置。","Choose the local FM27 installation folder, or cancel to configure it in the tool.");if(dialog.ShowDialog()==DialogResult.OK){File.WriteAllText(saved,dialog.SelectedPath,Encoding.UTF8);return dialog.SelectedPath;}}
+        using(var dialog=new FolderBrowserDialog()){
+            dialog.Description=L("选择本地 FM27 游戏根目录（包含 fm_Data 和 shared）。工具不会启动 Steam 或 Epic。","Select the local FM27 game root containing fm_Data and shared. The tool does not launch Steam or Epic.");
+            if(dialog.ShowDialog()==DialogResult.OK){
+                string selected=Path.GetFullPath(dialog.SelectedPath);
+                if(!Directory.Exists(Path.Combine(selected,"fm_Data"))||!Directory.Exists(Path.Combine(selected,"shared")))
+                    throw new Exception(L("所选目录不是完整的 FM27 游戏根目录。","The selected folder is not a complete FM27 game root."));
+                File.WriteAllText(saved,selected,Encoding.UTF8);
+                return selected;
+            }
+        }
         return "";
     }
     static string Unpack(){
