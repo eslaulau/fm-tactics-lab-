@@ -187,8 +187,11 @@ static bool desktop_prepare_runtime_dll_search(){
     for(const auto* name:desktop_platform_stub_names)if(!desktop_load_platform_stub(name))return false;
     if(!desktop_load_platform_probe(L"steam_api64.dll")||
        !desktop_load_platform_probe(L"EOSSDK-Win64-Shipping.dll"))return false;
-    fprintf(log_file,"{\"event\":\"platform_api_policy\",\"mode\":\"%s\",\"storefront_client_started\":false,\"platform_success_faked\":false}\n",
-        desktop_use_genuine_platform_apis?"genuine":"diagnostic");fflush(log_file);
+    if(desktop_use_genuine_platform_apis)
+        fputs("{\"event\":\"genuine_platform_api_mode_enabled\",\"real_steam_eos_loaded\":true,\"platform_success_faked\":false}\n",log_file);
+    else
+        fputs("{\"event\":\"offline_platform_boundary_enabled\",\"real_steam_eos_loaded\":false,\"platform_success_faked\":false}\n",log_file);
+    fflush(log_file);
     return true;
 }
 static bool desktop_load_platform_stub(const wchar_t* name){
@@ -2086,8 +2089,9 @@ static int child(bool run_match){
     wchar_t image[MAX_PATH];
     wcscpy_s(image,(desktop_game_root.empty()?bundle/L"game_plugin.dll":desktop_game_root/L"fm_Data/Plugins/x86_64/game_plugin.dll").c_str());
     if(!known_image(image)){fprintf(log_file,"{\"event\":\"unsupported_engine_compatibility\"}\n");fflush(log_file);return 99;}
-    fprintf(log_file,"{\"event\":\"headless_platform_api_policy\",\"mode\":\"%s\",\"storefront_client_started\":false,\"platform_success_faked\":false}\n",
-        desktop_use_genuine_platform_apis?"genuine":"diagnostic");fflush(log_file);
+    fprintf(log_file,"{\"event\":\"headless_platform_api_policy\",\"mode\":\"%s\",\"storefront_client_started\":false,\"real_steam_eos_loaded\":%s,\"platform_success_faked\":false}\n",
+        desktop_use_genuine_platform_apis?"genuine":"diagnostic",
+        desktop_use_genuine_platform_apis?"true":"false");fflush(log_file);
     if(!SetEnvironmentVariableW(L"FM27_PLATFORM_STUB_LOG",output.c_str())){
         fprintf(log_file,"{\"event\":\"platform_stub_log_path_unavailable\",\"error\":%lu}\n",GetLastError());fflush(log_file);
     }
