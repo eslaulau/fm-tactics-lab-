@@ -12,7 +12,7 @@ on:
       - "native/inprocess_bridge_exports.cpp"
       - "integration/BepInEx/FMTL.NativeBridge/**"
       - "src/inprocess_bridge.py"
-      - "src/desktop_warm_batch.py"
+      - "src/desktop_warm_batch.py src/fm27_tactics_server.py"
       - "native/platform_stub_iat_verifier.h"
       - "native/platform_probe_stub_template.cpp"
       - "native/native_steam_lifecycle.h"
