@@ -25,9 +25,11 @@ def stage_source(destination):
     shutil.copy2(ROOT / 'private/catalog.json', destination / 'tactics_ui/catalog.json')
 
 
-def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None):
+def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None, execution_mode='isolated'):
     if platform_api_mode not in ('diagnostic', 'genuine'):
         raise ValueError('platform_api_mode must be diagnostic or genuine')
+    if execution_mode not in ('isolated', 'inprocess'):
+        raise ValueError('execution_mode must be isolated or inprocess')
     if not REGISTRY.is_file():
         raise ValueError('Missing native/adapter_registry.json. Update the source tree before building.')
     registry = json.loads(REGISTRY.read_text(encoding='utf8'))
@@ -55,6 +57,8 @@ def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None)
         NATIVE / 'platform-stubs/PartyWin.dll',
         NATIVE / 'platform-stubs/PlayFabMultiplayerWin.dll'
     ]
+    if execution_mode == 'inprocess':
+        needed.append(NATIVE / 'FM27InProcessNative.dll')
     if platform_api_mode == 'diagnostic':
         needed.extend((
             NATIVE / 'platform-probes/steam_api64.dll',
@@ -111,10 +115,12 @@ def main():
                         help='Native adapter ID from native/adapter_registry.json, or auto by DLL SHA256.')
     parser.add_argument('--platform-api-mode', choices=('diagnostic', 'genuine'), default='diagnostic',
                         help='diagnostic uses fail-fast probes; genuine loads the original game-local Steam/EOS SDK DLLs.')
+    parser.add_argument('--execution-mode', choices=('isolated', 'inprocess'), default='isolated',
+                        help='isolated starts the existing native host; inprocess uses the opt-in BepInEx bridge inside the running FM27 process.')
     args = parser.parse_args()
     if os.name != 'nt' or sys.version_info[:2] != (3, 12):
         raise SystemExit('This source edition requires Windows x64 and Python 3.12.')
-    check_inputs(args.adapter, args.platform_api_mode, args.game_root)
+    check_inputs(args.adapter, args.platform_api_mode, args.game_root, args.execution_mode)
     source = ROOT / 'build/source'
     stage_source(source)
     data = ROOT / 'data'
@@ -125,6 +131,7 @@ def main():
                FM27_DESKTOP_DATA=str(data),
                FM27_NATIVE_DESKTOP_MODE=args.desktop_mode,
                FM27_PLATFORM_API_MODE=args.platform_api_mode,
+               FM27_NATIVE_EXECUTION_MODE=args.execution_mode,
                PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1')
     if args.adapter != 'auto':
         env['FM27_ENGINE_ADAPTER'] = args.adapter
