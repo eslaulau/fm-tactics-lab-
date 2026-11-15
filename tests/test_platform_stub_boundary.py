@@ -444,5 +444,19 @@ class GenuinePlatformApiModeTests(unittest.TestCase):
 
 
 
+    def test_genuine_mode_searches_game_root_for_original_steamclient_companion(self):
+        search = self.host.split("static bool desktop_prepare_runtime_dll_search()", 1)[1].split(
+            "static bool desktop_load_platform_stub", 1
+        )[0]
+        self.assertIn('dirs[index]/L"steamclient64.dll"', search)
+        self.assertIn("genuine_platform_dependency_search_dir_added", search)
+        self.assertIn("AddDllDirectory(dirs[index].c_str())", search)
+        module_state = self.host.split("static void desktop_log_platform_module_state", 1)[1].split(
+            "static int audit_policies", 1
+        )[0]
+        self.assertIn('{L"steamclient64.dll","steamclient64.dll"}', module_state)
+        self.assertIn('desktop_log_platform_module_state("after_game_plugin_load")', self.host)
+
+
 if __name__ == '__main__':
     unittest.main()
