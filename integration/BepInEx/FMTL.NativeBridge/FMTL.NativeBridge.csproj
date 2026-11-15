@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <FM27Dir Condition="'$(FM27Dir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Football Manager 27</FM27Dir>
+    <BepInExDir>$(FM27Dir)\BepInEx</BepInExDir>
+    <AssemblyName>FMTL.NativeBridge</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(BepInExDir)\core\BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>$(BepInExDir)\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="RequireBepInEx" BeforeTargets="ResolveAssemblyReferences"
+          Condition="!Exists('$(BepInExDir)\core\BepInEx.Core.dll') Or !Exists('$(BepInExDir)\core\BepInEx.Unity.IL2CPP.dll')">
+    <Error Text="Install BepInEx 6 IL2CPP in FM27 and run the game once, or pass -p:FM27Dir=&lt;game folder&gt;." />
+  </Target>
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
+    <MakeDir Directories="$(BepInExDir)\plugins\FMTL.NativeBridge" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExDir)\plugins\FMTL.NativeBridge" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
