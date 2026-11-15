@@ -215,7 +215,6 @@ extern "C" __declspec(dllexport) int __cdecl FM27InProcessRunManifest(
     worker_bootstrapped=true; // Reuse the objects already initialized by the real FM process.
     desktop_use_genuine_platform_apis=true;
     desktop_in_process_mode=true;
-    InterlockedExchange(&desktop_in_process_cancel_requested,0);
 
     log_file=_wfsopen(output.c_str(),L"w",_SH_DENYNO);
     if(!log_file){
@@ -227,6 +226,16 @@ extern "C" __declspec(dllexport) int __cdecl FM27InProcessRunManifest(
     int result=252;
     bool poisoned=false;
     FILE* session_log=log_file;
+    if(InterlockedCompareExchange(&desktop_in_process_cancel_requested,0,0)!=0){
+        fputs("{\"event\":\"inprocess_native_cancelled_before_start\",\"fm_process_terminated\":false}\n",log_file);
+        fflush(log_file);
+        fclose(session_log);
+        log_file=nullptr;
+        desktop_in_process_mode=false;
+        InterlockedExchange(&desktop_in_process_cancel_requested,0);
+        fm27_inprocess_write(response,response_capacity,"{\"ok\":false,\"reason\":\"cancelled_before_start\",\"worker_state_poisoned\":false}");
+        return 86;
+    }
     try{
         if(!fm27_inprocess_validation_rows.empty())fputs(fm27_inprocess_validation_rows.c_str(),log_file);
         fprintf(log_file,
