@@ -247,7 +247,8 @@ extern "C" __declspec(dllexport) int __cdecl FM27InProcessRunManifest(
         fflush(log_file);
         auto interface_object=*reinterpret_cast<void**>(native_base+0x0581CAB0);
         result=worker_loop(interface_object);
-        fprintf(log_file,"{\"event\":\"inprocess_native_worker_completed\",\"return_code\":%d}\n",result);
+        if(result!=0)poisoned=true;
+        fprintf(log_file,"{\"event\":\"inprocess_native_worker_completed\",\"return_code\":%d,\"worker_state_poisoned\":%s}\n",result,poisoned?"true":"false");
         fflush(log_file);
     }catch(const desktop_worker_abort& failure){
         poisoned=true;
