@@ -933,7 +933,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send({'error':status.get('message','执行方式检查失败'),'diagnostics':status},409)
                     ENGINE_COMPATIBILITY=status
                     ENGINE_DLL_SHA256=status.get('actual_dll_sha256')
-                    try:EXECUTION_MODE_FILE.write_text(selected+'\\n',encoding='utf8')
+                    try:EXECUTION_MODE_FILE.write_text(selected+'\n',encoding='utf8')
                     except OSError as error:
                         status['execution_mode_persistence_warning']='执行方式已切换，但无法写入本地设置：'+str(error)
                     return self.send(status)
