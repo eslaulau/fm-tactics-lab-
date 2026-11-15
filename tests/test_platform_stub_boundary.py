@@ -417,5 +417,29 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
         self.assertIn('::vfprintf(stream,format,args)', host)
 
 
+
+class GenuinePlatformApiModeTests(unittest.TestCase):
+    def test_host_has_a_separate_genuine_sdk_loading_mode(self):
+        self.assertIn('FM27_PLATFORM_API_MODE', self.host)
+        self.assertIn('desktop_use_genuine_platform_apis', self.host)
+        self.assertIn('desktop_game_root/L"fm_Data/Plugins/x86_64"', self.host)
+        self.assertIn('platform_api_genuine_dll_missing', self.host)
+        self.assertIn('platform_api_genuine_dll_ambiguous', self.host)
+        self.assertIn('desktop_verify_platform_probe_iat()', self.host)
+        self.assertIn('platform_success_faked\\":false', self.host)
+        self.assertNotIn('SteamAPI_Init(', self.host)
+        self.assertNotIn('SteamAPI_Shutdown(', self.host)
+
+    def test_source_runner_exposes_genuine_mode_without_requiring_probe_binaries(self):
+        runner = RUNNER.read_text(encoding='utf-8')
+        self.assertIn("--platform-api-mode', choices=('diagnostic', 'genuine')", runner)
+        self.assertIn("FM27_PLATFORM_API_MODE=args.platform_api_mode", runner)
+        genuine = runner.split("if platform_api_mode == 'diagnostic':", 1)[1]
+        self.assertIn("else:", genuine)
+        self.assertIn("game_dirs", genuine)
+        self.assertIn("PLATFORM_API_DLLS", genuine)
+
+
+
 if __name__ == '__main__':
     unittest.main()
