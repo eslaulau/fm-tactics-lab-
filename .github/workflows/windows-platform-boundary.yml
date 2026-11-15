@@ -50,6 +50,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up .NET SDK for the BepInEx bridge
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Enter x64 MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -120,6 +125,45 @@ jobs:
             Pop-Location
           }
 
+      - name: Compile and verify the in-process native bridge DLL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $nativeBuild = Join-Path $PWD "build\\native-host-compile-only"
+          Push-Location $nativeBuild
+          try {
+            & cl.exe /nologo /LD /O2 /EHsc /std:c++17 inprocess_bridge_exports.cpp /Fe:FM27InProcessNative_compile_only.dll /Fo:inprocess_bridge_exports.obj /link /INCREMENTAL:NO user32.lib bcrypt.lib
+            if ($LASTEXITCODE -ne 0) { throw "In-process native bridge DLL compile/link failed" }
+            $exports = & dumpbin.exe /nologo /exports FM27InProcessNative_compile_only.dll
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for in-process native bridge" }
+            $joined = $exports -join "`n"
+            foreach ($name in @("FM27InProcessAbiVersion", "FM27InProcessCheckReady", "FM27InProcessRunManifest", "FM27InProcessCancel")) {
+              if ($joined -notmatch [regex]::Escape($name)) { throw "Missing in-process bridge export: $name" }
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Prepare BepInEx IL2CPP references
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = Join-Path $PWD "build\\BepInEx-IL2CPP.zip"
+          $referenceRoot = Join-Path $PWD "build\\bepinex-reference-game"
+          New-Item -ItemType Directory -Force -Path (Split-Path $archive) | Out-Null
+          Invoke-WebRequest -Uri "https://builds.bepinex.dev/projects/bepinex_be/791/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.791%2Bb782da4.zip" -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $referenceRoot -Force
+          if (!(Test-Path (Join-Path $referenceRoot "BepInEx\\core\\BepInEx.Unity.IL2CPP.dll"))) { throw "BepInEx IL2CPP references not found in downloaded archive" }
+
+      - name: Build the BepInEx native bridge plugin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $referenceRoot = Join-Path $PWD "build\\bepinex-reference-game"
+          dotnet build integration/BepInEx/FMTL.NativeBridge/FMTL.NativeBridge.csproj --configuration Release -p:FM27Dir=$referenceRoot -p:SkipDeploy=true
+          if ($LASTEXITCODE -ne 0) { throw "BepInEx Native Bridge plugin build failed" }
+
       - name: Compile the desktop launcher with adapter argument forwarding
         shell: pwsh
         run: |
@@ -129,6 +173,12 @@ jobs:
           $csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"
           & $csc /nologo /target:winexe /platform:x64 /optimize+ /utf8output /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll ("/out:" + (Join-Path $build "FM27TacticsLauncher_compile_only.exe")) Launcher.cs
           if ($LASTEXITCODE -ne 0) { throw "Desktop launcher C# compile failed" }
+
+      - name: Run in-process bridge source-contract tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_inprocess_bridge_source.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "In-process bridge source tests failed" }
 
       - name: Compile both x64 fail-closed import stubs
         shell: pwsh
@@ -198,12 +248,16 @@ jobs:
           name: fm27-activation-scan-source
           path: |
             native/desktop_host.cpp
+            native/inprocess_bridge_exports.cpp
             native/native_steam_lifecycle.h
+            integration/BepInEx/FMTL.NativeBridge/FMTL.NativeBridge.csproj
+            integration/BepInEx/FMTL.NativeBridge/NativeBridgePlugin.cs
             src/runtime_layout.py
             src/desktop_engine.py
             scripts/run.py
             tests/test_runtime_layout.py
             tests/test_platform_stub_boundary.py
+            tests/test_inprocess_bridge_source.py
             .github/workflows/windows-platform-boundary.yml
           if-no-files-found: error
           retention-days: 7
@@ -214,7 +268,10 @@ jobs:
           name: fm27-adapter-registry-source
           path: |
             native/desktop_host.cpp
+            native/inprocess_bridge_exports.cpp
             native/adapter_registry.json
+            integration/BepInEx/FMTL.NativeBridge/FMTL.NativeBridge.csproj
+            integration/BepInEx/FMTL.NativeBridge/NativeBridgePlugin.cs
             native/profile_metadata.json
             native/adapter_version.json
             scripts/generate_profile.py
@@ -229,6 +286,7 @@ jobs:
             tests/test_adapter_registry.py
             tests/test_release.py
             tests/test_platform_stub_boundary.py
+            tests/test_inprocess_bridge_source.py
             docs/DEVELOPMENT.md
             CHANGELOG.md
             .github/workflows/windows-platform-boundary.yml
@@ -253,6 +311,16 @@ jobs:
         with:
           name: fm27-local-engine-source
           path: build/FM27_Local_Engine_Source.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload compiled in-process bridge preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: fm27-inprocess-native-bridge-preview
+          path: |
+            build/native-host-compile-only/FM27InProcessNative_compile_only.dll
+            integration/BepInEx/FMTL.NativeBridge/bin/Release/net6.0/FMTL.NativeBridge.dll
           if-no-files-found: error
           retention-days: 7
 
