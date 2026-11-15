@@ -51,7 +51,9 @@ class _BridgeClient:
     def __init__(self, game_root):
         self.game_root = Path(game_root).resolve()
         self.port, self.token = _read_bridge_config(self.game_root)
-        self.base_url = f"http://127.0.0.1:{self.port}"
+        # Match the BepInEx HttpListener prefix exactly; never route loopback IPC through a system proxy.
+        self.base_url = f"http://localhost:{self.port}"
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(self, path, method="GET", body=None, timeout=5):
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -62,7 +64,7 @@ class _BridgeClient:
             self.base_url + path, data=data, headers=headers, method=method
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
