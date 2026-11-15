@@ -11,7 +11,8 @@ TOP = {'README.md', 'README.en.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CONTRI
        'CHANGELOG.md', 'requirements.txt', 'Launcher.cs'}
 TYPES = {'src': {'.py', '.js', '.css', '.html'},
          'scripts': {'.py'}, 'tests': {'.py', '.cjs'}, 'docs': {'.md'},
-         'native': {'.cpp', '.h', '.manifest'}}
+         'native': {'.cpp', '.h', '.manifest'},
+         'integration': {'.cs', '.csproj'}}
 NATIVE_JSON = {'native/profile_metadata.json', 'native/adapter_version.json', 'native/adapter_registry.json'}
 SCREENSHOTS = {'docs/screenshots/tactics.png', 'docs/screenshots/players.png',
                'docs/screenshots/results.png', 'docs/screenshots/save-tactics.png',
