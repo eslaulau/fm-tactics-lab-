@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - work/runtime-dependency-layout-20261114
+      - work/inprocess-native-bridge-20261115
   pull_request:
     paths:
       - "native/platform_dependency_stub.cpp"
       - "native/desktop_host.cpp"
+      - "native/inprocess_bridge_exports.cpp"
+      - "integration/BepInEx/FMTL.NativeBridge/**"
+      - "src/inprocess_bridge.py"
+      - "src/desktop_warm_batch.py"
       - "native/platform_stub_iat_verifier.h"
       - "native/platform_probe_stub_template.cpp"
       - "native/native_steam_lifecycle.h"
@@ -30,6 +35,7 @@ on:
       - "CHANGELOG.md"
       - "Launcher.cs"
       - "scripts/run.py"
+      - "tests/test_inprocess_bridge_source.py"
       - "tests/test_platform_stub_boundary.py"
       - "tests/test_runtime_layout.py"
       - ".github/workflows/windows-platform-boundary.yml"
