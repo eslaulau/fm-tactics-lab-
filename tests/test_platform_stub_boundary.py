@@ -450,6 +450,7 @@ class GenuinePlatformApiModeTests(unittest.TestCase):
         )[0]
         self.assertIn('dirs[index]/L"steamclient64.dll"', search)
         self.assertIn("genuine_platform_dependency_search_dir_added", search)
+        self.assertIn("genuine_platform_dependency_missing", search)
         self.assertIn("AddDllDirectory(dirs[index].c_str())", search)
         module_state = self.host.split("static void desktop_log_platform_module_state", 1)[1].split(
             "static int audit_policies", 1
