@@ -107,7 +107,8 @@ public sealed class NativeBridgePlugin : BasePlugin
 
     private async Task HandleAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        if (context.Request.RemoteEndPoint is not { Address: var address } || !IPAddress.IsLoopback(address))
+        var remoteAddress = context.Request.RemoteEndPoint?.Address;
+        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
         {
             await ReplyAsync(context, 403, new { ok = false, reason = "loopback_only" });
             return;
