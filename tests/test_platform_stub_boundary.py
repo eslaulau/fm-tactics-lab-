@@ -419,6 +419,9 @@ class NativeThreadExitDiagnosticsTests(unittest.TestCase):
 
 
 class GenuinePlatformApiModeTests(unittest.TestCase):
+    def setUp(self):
+        self.host = HOST.read_text(encoding='utf-8')
+
     def test_host_has_a_separate_genuine_sdk_loading_mode(self):
         self.assertIn('FM27_PLATFORM_API_MODE', self.host)
         self.assertIn('desktop_use_genuine_platform_apis', self.host)
