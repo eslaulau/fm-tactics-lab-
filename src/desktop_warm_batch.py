@@ -105,6 +105,8 @@ class DesktopWarmRunner(BatchRunner):
         if self.counted_sessions and not any(r.get('event')=='native_execution_context_cleared'and r.get('team_bindings_cleared')for r in rows):raise ValueError('逐场执行力上下文未清除')
         released=next(r for r in rows if r['event']=='original_match_release_completed')
         if not (released.get('tls_context_cleared') or released.get('tls_context_restored')):raise ValueError('上一场原生线程上下文未恢复')
+        if self.execution_mode=='inprocess' and released.get('game_interface_released') is not False:
+            raise ValueError('进程内比赛错误释放了 FM27 全局接口对象')
         execution = execution_receipts(rows, task['scenario'])
         statistics=next((r for r in rows if r['event']=='native_match_statistics'),None)
         if not statistics or len(statistics['teams'])!=2:raise ValueError('缺少原生球队统计')
@@ -139,7 +141,7 @@ class DesktopWarmRunner(BatchRunner):
                 'postprocess_seconds':time.perf_counter()-began,'postprocess_queue_seconds':began-queued,
                 'native_elapsed_seconds':timings['total_ms']/1000,'native_elapsed_scope':'job_pipeline_excludes_session_DLL_load_and_activation','engine_compatibility':receipt['compatibility'],
                 'engine_dll_sha256':receipt['dll_sha256'],'collector_sha256':self.host_sha256,
-                'runtime_mode':'reused_execution_worker' if execution is not None and self.counted_sessions else 'isolated_execution_experiment' if execution is not None else 'reused_native_worker','event_details':event_details,
+                'runtime_mode':'inprocess_native_worker' if self.execution_mode=='inprocess' else 'reused_execution_worker' if execution is not None and self.counted_sessions else 'isolated_execution_experiment' if execution is not None else 'reused_native_worker','event_details':event_details,
                 'validation_scope':'native_match_score_team_statistics_and_player_events'if event_details else'native_match_score_and_team_statistics',
                 'worker_pid':ack['pid'],'worker_job_index':ack['index'],
                 'startup_receipt':str(receipt['_path'].relative_to(path.parent)),
