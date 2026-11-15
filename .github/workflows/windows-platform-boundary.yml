@@ -241,6 +241,21 @@ jobs:
           python scripts/verify_platform_stub_exports.py build/platform-stubs/PartyWin.dll build/platform-stubs/PlayFabMultiplayerWin.dll
           if ($LASTEXITCODE -ne 0) { throw "Compiled platform stub PE verification failed" }
 
+      - name: Export complete local-engine source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python scripts/export_source.py --output build/FM27_Local_Engine_Source.zip
+          if ($LASTEXITCODE -ne 0) { throw "Local-engine source export failed" }
+
+      - name: Upload complete local-engine source package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fm27-local-engine-source
+          path: build/FM27_Local_Engine_Source.zip
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload compiled stub binaries for inspection
         uses: actions/upload-artifact@v4
         with:
