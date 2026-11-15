@@ -36,6 +36,15 @@ def main():
         '/MANIFEST:EMBED', '/MANIFESTINPUT:host.manifest', 'user32.lib'
     ], cwd=out, check=True)
 
+    # Also build the opt-in in-process bridge. It is loaded only by the
+    # BepInEx plugin inside the already-running, normally launched FM process.
+    subprocess.run([
+        'cl', '/nologo', '/LD', '/O2', '/EHsc', '/std:c++17',
+        'inprocess_bridge_exports.cpp', '/Fe:FM27InProcessNative.dll',
+        '/Fo:inprocess_bridge_exports.obj', '/link', '/INCREMENTAL:NO',
+        'user32.lib', 'bcrypt.lib'
+    ], cwd=out, check=True)
+
     # Test the just-built executable against the exact DLL used to generate
     # this adapter. Do not accept an unverified or merely trial-compatible build
     # as a registered reference adapter.
@@ -60,6 +69,7 @@ def main():
         raise SystemExit('Built adapter did not verify against its exact reference game_plugin.dll')
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(out / 'FM27InProcessNative.dll', ENGINE / 'FM27InProcessNative.dll')
     shutil.copy2(out / 'FM27Simulator.exe', adapter_dir / 'FM27Simulator.exe')
     version_path = NATIVE / spec['version_metadata']
     shutil.copy2(version_path, adapter_dir / 'adapter_version.json')
@@ -104,6 +114,7 @@ def main():
 
     print('Built adapter:', args.adapter)
     print('Native host:', adapter_dir / 'FM27Simulator.exe')
+    print('In-process bridge:', ENGINE / 'FM27InProcessNative.dll')
     print('Shared offline platform boundary:', ENGINE)
 
 
