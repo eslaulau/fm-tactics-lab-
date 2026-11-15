@@ -1,8 +1,21 @@
 'use strict';
 // Keep diagnostics outside the rerendered tactic workspace. No storage access.
+let isolatedWorkerCount = null;
+function syncExecutionModeControls(mode){
+ const workers=document.querySelector('#workers');
+ if(!workers)return;
+ if(mode==='inprocess'){
+  if(!workers.disabled)isolatedWorkerCount=workers.value;
+  workers.value='1';workers.disabled=true;workers.title='FM27 进程内模式只支持单路串行';
+ }else{
+  workers.disabled=false;workers.removeAttribute('title');
+  if(isolatedWorkerCount!==null){workers.value=isolatedWorkerCount;isolatedWorkerCount=null;}
+ }
+}
 function showEngineStatus(status){
  const e=status.engine_compatibility||status;
  const mode=e.native_execution_mode||'isolated';
+ syncExecutionModeControls(mode);
  document.querySelector('#engine-summary').textContent=e.can_simulate?(mode==='inprocess'?'本地引擎：FM27 进程内实验模式已就绪':e.compatible?'本地引擎：关键接口检查通过':'本地引擎：尚未验证，可试运行'):'本地引擎：需要设置，战术编辑可正常使用';
  document.querySelector('#engine-message').textContent=e.message||'';
  document.querySelector('#engine-path').value=e.selected_game_root||'';
