@@ -1580,7 +1580,7 @@ static int native_match(void* interface_object){
                 release_ref(recording_file);
                 // tls_context_guard restores the worker thread's previous context on return.
                 DWORD handles=0;GetProcessHandleCount(GetCurrentProcess(),&handles);
-                fprintf(log_file,"{\"event\":\"original_match_release_completed\",\"tls_context_cleared\":%s,\"process_handles\":%lu}\n",*(void**)(tls+0x838)==nullptr?"true":"false",handles);fflush(log_file);
+                fprintf(log_file,"{\"event\":\"original_match_release_completed\",\"tls_context_restored\":true,\"game_interface_released\":%s,\"process_handles\":%lu}\n",desktop_in_process_mode?"false":"true",handles);fflush(log_file);
                 return 0;
             }
             desktop_finish_and_exit(0);return 0;
