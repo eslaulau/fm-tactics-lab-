@@ -46,9 +46,15 @@ The source runner passes this path directly to the local engine host. Open the p
 
 ## Platform API boundary
 
-The reference `game_plugin.dll` has static imports from Steamworks and Epic Online Services, in addition to PartyWin and PlayFab. The host does not launch either storefront client. Its current fail-closed API probes are diagnostic traps, not replacement implementations: an unexpected call is logged and terminates the worker. They never return successful authentication, ownership, entitlement, or online-service results.
+The reference `game_plugin.dll` has static imports from Steamworks and Epic Online Services, in addition to PartyWin and PlayFab. The FMTL launcher does not start either storefront client. The default `diagnostic` mode binds Steam/EOS imports to fail-fast probes. The optional `genuine` mode instead loads the original `steam_api64.dll` and `EOSSDK-Win64-Shipping.dll` from the selected game directory and verifies every expected IAT slot resolves to those exact modules.
 
-This means the FMTL launcher itself is client-independent, but a successful no-client match still has to be demonstrated with the actual local engine build. A clean DLL load or `--check-image` result is not proof that a complete match can run without platform APIs. See [the platform API boundary report](PLATFORM_DEPENDENCY_BOUNDARY.md).
+Run the genuine-SDK mode with:
+
+```powershell
+py -3.12 scripts/run.py --game-root "D:\Games\Football Manager 27" --platform-api-mode genuine
+```
+
+This mode does not call Steam/EOS initialization functions itself, does not start a storefront client, and does not fabricate authentication, ownership, entitlement, or online-service results. The original engine may call the authentic SDKs during its own initialization; their real result is preserved. An SDK or anti-tamper component may still require the supported platform launch context or account authorization. This mode is a diagnostic comparison, not a way to bypass those requirements. A clean DLL load or `--check-image` result is not proof that a complete match can run. See [the platform API boundary report](PLATFORM_DEPENDENCY_BOUNDARY.md).
 
 ## Build a local desktop EXE
 
