@@ -69,7 +69,7 @@ jobs:
       - name: Check changed Python build and verification scripts
         shell: pwsh
         run: |
-          python -m py_compile scripts/generate_profile.py scripts/profile_header.py scripts/build_native.py scripts/build_exe.py scripts/export_source.py scripts/build_platform_probe_stubs.py scripts/verify_platform_stub_exports.py scripts/verify_platform_probe_stubs.py scripts/run.py src/runtime_layout.py src/desktop_engine.py src/inprocess_bridge.py
+          python -m py_compile scripts/generate_profile.py scripts/profile_header.py scripts/build_native.py scripts/build_exe.py scripts/export_source.py scripts/build_platform_probe_stubs.py scripts/verify_platform_stub_exports.py scripts/verify_platform_probe_stubs.py scripts/run.py src/runtime_layout.py src/desktop_engine.py src/inprocess_bridge.py src/desktop_warm_batch.py
           if ($LASTEXITCODE -ne 0) { throw "Python compile check failed" }
 
       - name: Run runtime-layout regression tests
