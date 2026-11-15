@@ -36,6 +36,7 @@ on:
       - "Launcher.cs"
       - "scripts/run.py"
       - "tests/test_inprocess_bridge_source.py"
+      - "tests/test_inprocess_bridge.py"
       - "tests/test_platform_stub_boundary.py"
       - "tests/test_runtime_layout.py"
       - ".github/workflows/windows-platform-boundary.yml"
@@ -185,6 +186,12 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_inprocess_bridge_source.py" -v
           if ($LASTEXITCODE -ne 0) { throw "In-process bridge source tests failed" }
+
+      - name: Run in-process Python bridge client tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_inprocess_bridge.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "In-process Python bridge client tests failed" }
 
       - name: Compile both x64 fail-closed import stubs
         shell: pwsh
