@@ -59,8 +59,6 @@ def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None,
         NATIVE / 'platform-stubs/PartyWin.dll',
         NATIVE / 'platform-stubs/PlayFabMultiplayerWin.dll'
     ]
-    if execution_mode == 'inprocess':
-        needed.append(NATIVE / 'FM27InProcessNative.dll')
     if platform_api_mode == 'diagnostic':
         needed.extend((
             NATIVE / 'platform-probes/steam_api64.dll',
@@ -102,6 +100,8 @@ def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None,
             adapter_root / 'engine_compat_profile.json',
             adapter_root / 'adapter_version.json'
         ))
+        if execution_mode == 'inprocess':
+            needed.append(adapter_root / 'FM27InProcessNative.dll')
     missing = [str(path.relative_to(ROOT)) for path in needed if not path.is_file()]
     if missing:
         raise ValueError('Prepare private assets and build native first. Missing:\n' + '\n'.join(missing))
