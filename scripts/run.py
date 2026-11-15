@@ -30,6 +30,8 @@ def check_inputs(adapter='auto', platform_api_mode='diagnostic', game_root=None,
         raise ValueError('platform_api_mode must be diagnostic or genuine')
     if execution_mode not in ('isolated', 'inprocess'):
         raise ValueError('execution_mode must be isolated or inprocess')
+    if execution_mode == 'inprocess' and platform_api_mode != 'genuine':
+        raise ValueError('进程内模式必须使用 --platform-api-mode genuine，以保留 FM27 进程中的真实 Steam/EOS 运行时。')
     if not REGISTRY.is_file():
         raise ValueError('Missing native/adapter_registry.json. Update the source tree before building.')
     registry = json.loads(REGISTRY.read_text(encoding='utf8'))
