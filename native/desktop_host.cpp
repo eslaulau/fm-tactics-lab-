@@ -111,6 +111,7 @@ static const wchar_t* desktop_platform_stub_names[] = {
 };
 static bool desktop_load_platform_stub(const wchar_t* name);
 static bool desktop_load_platform_probe(const wchar_t* name);
+static std::string desktop_json_string(const std::wstring& value);
 
 static void desktop_append_runtime_dir(std::vector<fs::path>& dirs, const fs::path& candidate){
     std::error_code error;
