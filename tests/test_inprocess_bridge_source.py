@@ -9,6 +9,7 @@ EXPORTS = (ROOT / "native/inprocess_bridge_exports.cpp").read_text(encoding="utf
 PLUGIN = (ROOT / "integration/BepInEx/FMTL.NativeBridge/NativeBridgePlugin.cs").read_text(encoding="utf-8")
 BUILDER = (ROOT / "scripts/build_native.py").read_text(encoding="utf-8")
 EXPORTER = (ROOT / "scripts/export_source.py").read_text(encoding="utf-8")
+RUNNER = (ROOT / "scripts/run.py").read_text(encoding="utf-8")
 
 
 class InProcessBridgeSourceTests(unittest.TestCase):
@@ -47,6 +48,12 @@ class InProcessBridgeSourceTests(unittest.TestCase):
         self.assertIn("NativeWorker\", \"Enabled\", false", PLUGIN)
         self.assertIn("X-FMTL-Token", PLUGIN)
         self.assertIn("localhost", PLUGIN)
+
+    def test_runner_requires_genuine_sdk_and_adapter_specific_bridge(self):
+        self.assertIn("--execution-mode", RUNNER)
+        self.assertIn("FM27_NATIVE_EXECUTION_MODE=args.execution_mode", RUNNER)
+        self.assertIn("--platform-api-mode genuine", RUNNER)
+        self.assertIn("adapter_root / 'FM27InProcessNative.dll'", RUNNER)
 
     def test_build_and_source_export_include_bridge(self):
         self.assertIn("FM27InProcessNative.dll", BUILDER)
