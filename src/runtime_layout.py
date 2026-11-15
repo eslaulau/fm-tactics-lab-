@@ -1,18 +1,16 @@
-"""Resolve ICU runtime DLLs and the mandatory offline Steam/EOS boundary.
-Normal match runs never search for genuine Steamworks/EOS runtimes. Their
-imports always bind to local API-identifying fail-fast modules.
-PartyWin and PlayFab use separate fail-fast stubs.
-"""
+"""Resolve FM27 native runtime dependencies and the selected platform API mode."""
 import os
 from pathlib import Path
 
 RUNTIME_DLLS = ('icuuc65.dll', 'icuin65.dll', 'icudt65.dll')
 FAIL_CLOSED_PLATFORM_STUBS = ('PartyWin.dll', 'PlayFabMultiplayerWin.dll')
 PLATFORM_PROBE_DLLS = ('steam_api64.dll', 'EOSSDK-Win64-Shipping.dll')
+PLATFORM_API_DLLS = PLATFORM_PROBE_DLLS
+PLATFORM_API_MODES = ('diagnostic', 'genuine')
 
 
 def runtime_search_dirs(game_root=None, native_root=None):
-    """Return deterministic locations for the genuine non-platform runtimes."""
+    """Return deterministic locations for ICU and diagnostic bundle assets."""
     candidates = []
     if game_root is not None:
         game = Path(game_root)
@@ -36,31 +34,43 @@ def runtime_search_dirs(game_root=None, native_root=None):
     return tuple(result)
 
 
-def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=None):
-    """Resolve ICU, Party/PlayFab stubs and mandatory offline Steam/EOS traps.
+def _unique_file_matches(directories, name):
+    matches = [directory / name for directory in directories
+               if (directory / name).is_file()]
+    if not matches:
+        return None, ()
+    first = matches[0]
+    try:
+        same_file = all(os.path.samefile(first, other) for other in matches[1:])
+    except OSError:
+        same_file = False
+    if same_file:
+        return first, ()
+    return None, tuple(matches)
 
-    platform_probe_mode remains accepted for old callers but is ignored:
-    fail-closed platform isolation is now the only runtime mode.
+
+def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=None,
+                         platform_api_mode='diagnostic'):
+    """Resolve ICU, Party/PlayFab traps, and genuine or diagnostic Steam/EOS APIs.
+
+    The legacy platform_probe_mode parameter is accepted for compatibility but
+    has no effect. Genuine mode loads the original SDK files found in the local
+    game tree; diagnostic mode loads distinct fail-fast probes from the bundle.
     """
+    mode = str(platform_api_mode or 'diagnostic').strip().lower()
+    if mode not in PLATFORM_API_MODES:
+        raise ValueError('platform_api_mode must be diagnostic or genuine')
+
     directories = runtime_search_dirs(game_root, native_root)
     found, missing, ambiguous = {}, [], {}
     for name in RUNTIME_DLLS:
-        matches = [directory / name for directory in directories
-                   if (directory / name).is_file()]
-        if not matches:
+        path, conflicts = _unique_file_matches(directories, name)
+        if path is None and conflicts:
+            ambiguous[name] = conflicts
+        elif path is None:
             missing.append(name)
-        elif len(matches) == 1:
-            found[name] = matches[0]
         else:
-            first = matches[0]
-            try:
-                same_file = all(os.path.samefile(first, other) for other in matches[1:])
-            except OSError:
-                same_file = False
-            if same_file:
-                found[name] = first
-            else:
-                ambiguous[name] = tuple(matches)
+            found[name] = path
 
     stubs, missing_stubs = {}, []
     if native_root is not None:
@@ -75,16 +85,29 @@ def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=N
         missing_stubs.extend(FAIL_CLOSED_PLATFORM_STUBS)
 
     probes, missing_probes = {}, []
-    if native_root is not None:
-        probe_root = Path(native_root) / 'platform-probes'
-        for name in PLATFORM_PROBE_DLLS:
-            path = probe_root / name
-            if path.is_file():
-                probes[name] = path
-            else:
-                missing_probes.append(name)
+    api_modules, missing_api_modules, ambiguous_api_modules = {}, [], {}
+    if mode == 'diagnostic':
+        if native_root is not None:
+            probe_root = Path(native_root) / 'platform-probes'
+            for name in PLATFORM_PROBE_DLLS:
+                path = probe_root / name
+                if path.is_file():
+                    probes[name] = path
+                else:
+                    missing_probes.append(name)
+        else:
+            missing_probes.extend(PLATFORM_PROBE_DLLS)
     else:
-        missing_probes.extend(PLATFORM_PROBE_DLLS)
+        # Never fall back to bundled diagnostic modules in genuine mode.
+        game_directories = runtime_search_dirs(game_root, None)
+        for name in PLATFORM_API_DLLS:
+            path, conflicts = _unique_file_matches(game_directories, name)
+            if path is None and conflicts:
+                ambiguous_api_modules[name] = conflicts
+            elif path is None:
+                missing_api_modules.append(name)
+            else:
+                api_modules[name] = path
 
     return {
         'found': found,
@@ -95,6 +118,10 @@ def resolve_runtime_dlls(game_root=None, native_root=None, platform_probe_mode=N
         'missing_platform_stubs': tuple(missing_stubs),
         'platform_probes': probes,
         'missing_platform_probes': tuple(missing_probes),
-        'offline_platform_boundary': True,
-        'platform_probe_mode': True,
+        'platform_api_modules': api_modules,
+        'missing_platform_api_modules': tuple(missing_api_modules),
+        'ambiguous_platform_api_modules': ambiguous_api_modules,
+        'platform_api_mode': mode,
+        'offline_platform_boundary': mode == 'diagnostic',
+        'platform_probe_mode': mode == 'diagnostic',
     }
