@@ -69,8 +69,8 @@ def main():
         raise SystemExit('Built adapter did not verify against its exact reference game_plugin.dll')
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(out / 'FM27InProcessNative.dll', ENGINE / 'FM27InProcessNative.dll')
     shutil.copy2(out / 'FM27Simulator.exe', adapter_dir / 'FM27Simulator.exe')
+    shutil.copy2(out / 'FM27InProcessNative.dll', adapter_dir / 'FM27InProcessNative.dll')
     version_path = NATIVE / spec['version_metadata']
     shutil.copy2(version_path, adapter_dir / 'adapter_version.json')
     (ENGINE / 'adapter_registry.json').write_text(
@@ -81,6 +81,7 @@ def main():
     # match scheduling and worker code therefore remain unchanged.
     if args.adapter == registry['default_adapter']:
         shutil.copy2(out / 'FM27Simulator.exe', ENGINE / 'FM27Simulator.exe')
+        shutil.copy2(adapter_dir / 'FM27InProcessNative.dll', ENGINE / 'FM27InProcessNative.dll')
         shutil.copy2(adapter_dir / 'engine_compat_profile.json',
                      ENGINE / 'engine_compat_profile.json')
         shutil.copy2(adapter_dir / 'adapter_version.json',
