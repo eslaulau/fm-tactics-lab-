@@ -30,6 +30,7 @@ import fm27_tactic_pool
 import fm27_match_events
 import desktop_generation_protocol
 import desktop_native_errors
+import desktop_engine_acceptance
 import desktop_locale
 import desktop_generation_catalog
 import desktop_source_plans
@@ -361,6 +362,7 @@ def metrics(runs):
 
 LOCK=threading.RLock();JOBS={};POOL=ThreadPoolExecutor(max_workers=1)
 IMPORT_LOCK=threading.Lock()
+ENGINE_ACCEPTANCE_ACTIVE=False
 import desktop_save_mode
 import sys
 SAVE_LIBRARY=desktop_save_mode.SaveLibrary(sys.modules[__name__])
@@ -926,6 +928,20 @@ class Handler(BaseHTTPRequestHandler):
                     ENGINE_DLL_SHA256=ENGINE_COMPATIBILITY['actual_dll_sha256']
                     (RUNS.parent/'game-root.txt').write_text(selected,encoding='utf-8-sig')
                     return self.send(ENGINE_COMPATIBILITY)
+            if path=='/api/engine/smoke-match':
+                global ENGINE_ACCEPTANCE_ACTIVE
+                with IMPORT_LOCK:
+                    with LOCK:
+                        if ENGINE_ACCEPTANCE_ACTIVE:raise ValueError('原版引擎验收已在运行')
+                        if SAVE_LIBRARY.active or SAVE_LIBRARY.real_active:raise ValueError('请等待存档解析或AI战术生成结束后再验收')
+                        if any(j['status']in ('queued','running')for j in JOBS.values()):raise ValueError('请等待当前比赛批次结束后再验收')
+                        desktop_engine.require_available(ENGINE_COMPATIBILITY)
+                        ENGINE_ACCEPTANCE_ACTIVE=True
+                    try:
+                        directory=RUNS/'engine-acceptance'/secrets.token_hex(8)
+                        return self.send(desktop_engine_acceptance.run_smoke(ROOT,directory))
+                    finally:
+                        with LOCK:ENGINE_ACCEPTANCE_ACTIVE=False
             if path in ('/api/import-fmf','/api/pool/import-fmf','/api/export-fmf','/api/export-setpiece'):
                 desktop_engine.require_available(ENGINE_COMPATIBILITY)
             if path=='/api/import-fmf':return self.send(import_fmf(data))
@@ -936,6 +952,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/phase-plan':return self.send({'scenario':phase_inputs.pack(validate_scenario(data),CATALOG)})
             if path=='/api/repair':return self.send(repair_saved_scenario(data))
             if path in('/api/run','/api/run-episodes'):
+                if ENGINE_ACCEPTANCE_ACTIVE:raise ValueError('原版引擎验收运行中，请稍后再提交比赛批次')
                 if SAVE_LIBRARY.real_active:raise ValueError('请等待真实AI战术生成完成后运行比赛')
                 if SAVE_LIBRARY.active:raise ValueError('请等待存档及历史输入解析完成后运行比赛')
                 event_details=data.get('event_details',True)
