@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 import sys
 sys.path.insert(0, str(ROOT / 'src'))
+os.environ.setdefault('FM27_ENGINE_ROOT', str(ROOT / 'build/test-temp'))
 
 import desktop_engine_acceptance
 
