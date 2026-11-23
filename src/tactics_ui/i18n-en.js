@@ -21,6 +21,7 @@ window.FM27English = {
  "选择此目录并检查": "Use this folder and check",
  "运行一场原版比赛验收": "Run one original-engine match acceptance",
  "本地引擎：已完成一场原版比赛验收": "Local engine: one original-engine match accepted",
+ "已完成一场原版比赛验收": "One original-engine match has been accepted",
  "正在运行原版比赛": "Running original-engine match",
  "正在调用本机": "Calling local",
  "原版比赛引擎": "original match engine",
