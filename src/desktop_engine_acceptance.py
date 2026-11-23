@@ -31,7 +31,7 @@ def run_smoke(root, output_dir, timeout=190):
         }
 
     missing = []
-    if not result.get("result", {}).get("result", {}).get("full_match_completed"):
+    if not result.get("result", {}).get("full_match_completed"):
         missing.append("natural_match_finished")
     if not result.get("statistics"):
         missing.append("native_match_statistics")
@@ -48,7 +48,7 @@ def run_smoke(root, output_dir, timeout=190):
     return {
         "ok": True,
         "stage": "native_match_completed",
-        "match": result["result"]["result"],
+        "match": result["result"],
         "statistics": result["statistics"],
         "timings": result["timings"],
         "engine_compatibility": result.get("engine_compatibility"),
