@@ -1,9 +1,9 @@
-name: Build FM27 Local Tactics Lab 1.0.0
+name: Build FM27 Local Tactics Lab 1.0.1
 
 on:
   push:
     branches:
-      - release/fm27-local-tactics-lab-1.0.0
+      - release/fm27-local-tactics-lab-1.0.1
   workflow_dispatch:
 
 permissions:
@@ -78,7 +78,7 @@ jobs:
         run: |
           $pythonHome = (& python -c "import sys; print(sys.prefix)").Trim()
           python scripts/build_exe.py --python-home "$pythonHome"
-          $exe = "dist/FM27-Local-Tactics-Lab-1.0.0.exe"
+          $exe = "dist/FM27-Local-Tactics-Lab-1.0.1.exe"
           if (-not (Test-Path $exe)) { throw "Expected executable was not produced: $exe" }
           Get-FileHash -LiteralPath $exe -Algorithm SHA256
           Get-Content -LiteralPath "dist/private-build.json"
@@ -86,7 +86,7 @@ jobs:
       - name: Smoke-test packaged desktop executable
         shell: pwsh
         run: |
-          $exe = (Resolve-Path "dist/FM27-Local-Tactics-Lab-1.0.0.exe").Path
+          $exe = (Resolve-Path "dist/FM27-Local-Tactics-Lab-1.0.1.exe").Path
           $testData = Join-Path $PWD "build/self-test-data"
           $process = Start-Process -FilePath $exe -ArgumentList @("--self-test", "--data-dir", $testData) -Wait -PassThru -NoNewWindow
           if ($process.ExitCode -ne 0) {
@@ -103,9 +103,9 @@ jobs:
       - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: FM27-Local-Tactics-Lab-1.0.0-Windows-x64
+          name: FM27-Local-Tactics-Lab-1.0.1-Windows-x64
           path: |
-            dist/FM27-Local-Tactics-Lab-1.0.0.exe
+            dist/FM27-Local-Tactics-Lab-1.0.1.exe
             dist/private-build.json
           if-no-files-found: error
           retention-days: 30
