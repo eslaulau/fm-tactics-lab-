@@ -10,9 +10,9 @@ class EngineAcceptanceTests(unittest.TestCase):
     def test_requires_full_native_match_and_statistics(self):
         payload = {
             "verified": True,
-            "result": {"result": {"event": "natural_match_finished",
-                                  "full_match_completed": True,
-                                  "score": [2, 1], "tick": 1234}},
+            "result": {"event": "natural_match_finished",
+                       "full_match_completed": True,
+                       "score": [2, 1], "tick": 1234},
             "statistics": {"event": "native_match_statistics"},
             "timings": {"event": "native_timings"},
             "engine_compatibility": {"compatible": True},
@@ -31,7 +31,7 @@ class EngineAcceptanceTests(unittest.TestCase):
     def test_rejects_process_without_native_match_evidence(self):
         payload = {
             "verified": True,
-            "result": {"result": {"full_match_completed": True}},
+            "result": {"full_match_completed": True},
             "statistics": None,
             "timings": {"event": "native_timings"},
         }
