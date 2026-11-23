@@ -76,9 +76,10 @@ static bool ensure_steam_client(){
     std::wstring command=L"\""+std::wstring(path)+L"\" -silent";
     STARTUPINFOW startup={};startup.cb=sizeof(startup);PROCESS_INFORMATION process={};
     BOOL created=CreateProcessW(path,command.data(),nullptr,nullptr,FALSE,0,nullptr,fs::path(path).parent_path().c_str(),&startup,&process);
+    DWORD create_error=created?0:GetLastError();
     if(created){CloseHandle(process.hThread);CloseHandle(process.hProcess);}
     for(unsigned i=0;i<80;i++){if(steam_process_running()){printf("{\"event\":\"steam_client_presence\",\"running\":true,\"started_by_host\":%s}\n",created?"true":"false");return true;}Sleep(250);}
-    printf("{\"event\":\"steam_client_presence\",\"running\":false,\"started_by_host\":%s,\"reason\":\"startup_timeout\",\"create_error\":%lu}\n",created?"true":"false",created?0:GetLastError());
+    printf("{\"event\":\"steam_client_presence\",\"running\":false,\"started_by_host\":%s,\"reason\":\"startup_timeout\",\"create_error\":%lu}\n",created?"true":"false",create_error);
     return false;
 }
 static uint64_t input_cursor=0,input_reads=0;
