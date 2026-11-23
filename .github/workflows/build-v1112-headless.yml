@@ -54,6 +54,7 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m pip install --disable-pip-version-check dnfile==0.16.4
 
       - name: Extract v1112 private runtime inputs
         shell: pwsh
