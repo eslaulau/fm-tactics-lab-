@@ -3,7 +3,7 @@ name: Build FM27 Local Tactics Lab 1.0.1
 on:
   push:
     branches:
-      - release/fm27-local-tactics-lab-1.0.1
+      - release/fm27-local-tactics-lab-1.0.0
   workflow_dispatch:
 
 permissions:
