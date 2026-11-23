@@ -25,6 +25,7 @@ import desktop_save_export
 import desktop_save_mode
 import fm27_fmf
 import fm27_tactic_pool
+import desktop_native_errors
 
 SOURCE={'save_id':'0123456789abcdef','source':'C:/saves/career.fm','source_sha256':'a'*64,
         'date':'2027-01-15','build':'27.1.0'}
@@ -63,6 +64,19 @@ class FmfPlanTests(unittest.TestCase):
         payload=bytearray(archive(2));start=len(fm27_fmf.HEADER)+17
         struct.pack_into('<I',payload,start+5,len(sample_plan(2))+1)
         with self.assertRaises(ValueError):fm27_fmf.tactics_plan(bytes(payload))
+
+class NativeFailureClassificationTests(unittest.TestCase):
+    def test_exit_82_is_activation_timeout_only_when_native_log_confirms_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log=Path(directory)/'native_import.jsonl'
+            log.write_text(json.dumps({'event':'activation_still_pending','word':0})+'\n',encoding='utf8')
+            self.assertTrue(desktop_native_errors.activation_pending(82,log))
+            self.assertFalse(desktop_native_errors.activation_pending(0,log))
+            log.write_text(json.dumps({'event':'native_tactic_file_parsed','accepted':False})+'\n',encoding='utf8')
+            self.assertFalse(desktop_native_errors.activation_pending(82,log))
+            log.write_text('{invalid json\n',encoding='utf8')
+            self.assertFalse(desktop_native_errors.activation_pending(82,log))
+
 
 class SafeComponentTests(unittest.TestCase):
     def test_replaces_windows_illegal_characters(self):

@@ -36,6 +36,7 @@ static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
 static unsigned char* native_base;
+
 static uint64_t input_cursor=0,input_reads=0;
 #include "native_steam_lifecycle.h"
 static void* at(uintptr_t rva){
@@ -1044,6 +1045,7 @@ int wmain(int argc,wchar_t** argv){
     if(!check_image.empty()){log_file=stdout;return known_image(check_image)?0:99;}
     if(!desktop_cancel_name.empty()){desktop_cancel_event=OpenEventW(SYNCHRONIZE|EVENT_MODIFY_STATE,FALSE,desktop_cancel_name.c_str());if(!desktop_cancel_event)return 181;}
     if(is_child){unsigned status=child(true);desktop_finish_and_exit(status);}
+    // Do not launch or require the Steam desktop client for the headless host.
     wchar_t desktop_name[96];swprintf_s(desktop_name,L"FmEngineControl_%lu",GetCurrentProcessId());
     auto desktop=CreateDesktopW(desktop_name,nullptr,nullptr,0,GENERIC_ALL,nullptr);
     if(!desktop){printf("desktop_create_error=%lu\n",GetLastError());return 83;}

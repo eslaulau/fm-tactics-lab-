@@ -29,6 +29,7 @@ import fm27_fmf
 import fm27_tactic_pool
 import fm27_match_events
 import desktop_generation_protocol
+import desktop_native_errors
 import desktop_locale
 import desktop_generation_catalog
 import desktop_source_plans
@@ -508,11 +509,19 @@ def export_fmf(data):
     payload=fm27_fmf.tactics_archive(plan.read_bytes(),title);path=directory/(title+'.fmf');path.write_bytes(payload)
     # Verify the archive and the original serialized plan through the same game
     # parser used by imports. A download is returned only after semantic parity.
-    imported=import_fmf({'side':side,'scenario':scenario,'file_base64':base64.b64encode(payload).decode()});actual=imported['scenario']['teams'][side]
     keys=['mentality','instructions','native_extra_team_bits','phases']
-    differences=[key for key in keys if actual[key]!=team[key]]
-    if differences:raise ValueError('导出后原版回读不一致：'+','.join(differences))
-    report={'name':title,'sha256':hashlib.sha256(payload).hexdigest(),'native_roundtrip_verified':True,'verified_sections':keys,'notice':'FMF 导出当前球队的双阶段阵型、角色、球队／球员指令及心态。球员属性、针对性指令与定位球不随此文件导出；完整工具配置请另存 JSON。'}
+    try:
+        imported=import_fmf({'side':side,'scenario':scenario,'file_base64':base64.b64encode(payload).decode()})
+    except desktop_native_errors.NativeActivationTimeout:
+        # The TAC bytes were emitted by FM's own serializer. If the follow-up
+        # verification process never activates, keep the writer output available
+        # but explicitly mark semantic round-trip as unverified.
+        report={'name':title,'sha256':hashlib.sha256(payload).hexdigest(),'native_roundtrip_verified':False,'verified_sections':[],'notice':'FM27 原版已完成战术序列化；随后启动的回读验证进程未能完成引擎激活（退出码 82），并非读取器拒绝文件。本次导出保留原版序列化结果，但尚未完成回读核验。'}
+    else:
+        actual=imported['scenario']['teams'][side]
+        differences=[key for key in keys if actual[key]!=team[key]]
+        if differences:raise ValueError('导出后原版回读不一致：'+','.join(differences))
+        report={'name':title,'sha256':hashlib.sha256(payload).hexdigest(),'native_roundtrip_verified':True,'verified_sections':keys,'notice':'FMF 导出当前球队的双阶段阵型、角色、球队／球员指令及心态。球员属性、针对性指令与定位球不随此文件导出；完整工具配置请另存 JSON。'}
     (directory/'verification.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
     return {'filename':title+'.fmf','file_base64':base64.b64encode(payload).decode(),'report':report}
 
@@ -547,6 +556,8 @@ def import_fmf(data):
         variants[variant]={'name':bytes.fromhex(decoded['name_utf8_hex']).decode('utf8')[:64],'frequency':routine['frequency'],'strategy':routine['strategy'],'swing':routine['swing'],'groups':routine['groups'],'backups':backups,'priority':routine['priority'],'opaque_flags':routine['opaque_flags']}
         scenario=validate_scenario(scenario);report={'setpiece_type':kind,'notice':'已通过原版解析器导入'+setpieces.TYPE_NAMES[kind]+'套路；包含任务、备用任务、分配顺序、发球策略和频率。','native_roundtrip_verified':True}
         (directory/'import_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8');return {'scenario':scenario,'report':report}
+    if desktop_native_errors.activation_pending(result.returncode,output):
+        raise desktop_native_errors.NativeActivationTimeout('原版引擎初始化超时（退出码 82），战术读取器尚未执行；请重试，未改动当前配置')
     if result.returncode or not parsed or not decoded or not parsed['accepted']or parsed['stream_error']:raise ValueError('本机游戏解析器未完整接受此战术，未改动当前配置')
     team=scenario['teams'][side]
     SAVE_LIBRARY.apply_plan(team,parsed)

@@ -8,7 +8,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TOP = {'README.md', 'README.en.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CONTRIBUTING.md',
-       'CHANGELOG.md', 'requirements.txt', '.gitignore', '.gitattributes', 'Launcher.cs'}
+       'CHANGELOG.md', 'requirements.txt', 'Launcher.cs'}
 TYPES = {'src': {'.py', '.js', '.css', '.html'},
          'scripts': {'.py'}, 'tests': {'.py', '.cjs'}, 'docs': {'.md'},
          'native': {'.cpp', '.h', '.manifest'}}
