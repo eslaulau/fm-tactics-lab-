@@ -53,7 +53,7 @@ static bool steam_process_running(){
     CloseHandle(snapshot);return found;
 }
 static bool ensure_steam_client(){
-    if(steam_process_running()){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":true,\\"started_by_host\\":false}\\n");return true;}
+    if(steam_process_running()){printf("{\"event\":\"steam_client_presence\",\"running\":true,\"started_by_host\":false}\n");return true;}
     wchar_t path[32768]={};
     if(GetEnvironmentVariableW(L"FM27_STEAM_EXE",path,(DWORD)(sizeof(path)/sizeof(path[0])))==0){
         DWORD bytes=(DWORD)sizeof(path);
@@ -72,13 +72,13 @@ static bool ensure_steam_client(){
             if(fs::exists(candidate)){wcscpy_s(path,candidate.c_str());break;}
         }
     }
-    if(!path[0]||!fs::exists(path)){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":false,\\"started_by_host\\":false,\\"reason\\":\\"steam_executable_not_found\\"}\\n");return false;}
-    std::wstring command=L"\\""+std::wstring(path)+L"\\" -silent";
+    if(!path[0]||!fs::exists(path)){printf("{\"event\":\"steam_client_presence\",\"running\":false,\"started_by_host\":false,\"reason\":\"steam_executable_not_found\"}\n");return false;}
+    std::wstring command=L"\""+std::wstring(path)+L"\" -silent";
     STARTUPINFOW startup={};startup.cb=sizeof(startup);PROCESS_INFORMATION process={};
     BOOL created=CreateProcessW(path,command.data(),nullptr,nullptr,FALSE,0,nullptr,fs::path(path).parent_path().c_str(),&startup,&process);
     if(created){CloseHandle(process.hThread);CloseHandle(process.hProcess);}
-    for(unsigned i=0;i<80;i++){if(steam_process_running()){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":true,\\"started_by_host\\":%s}\\n",created?"true":"false");return true;}Sleep(250);}
-    printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":false,\\"started_by_host\\":%s,\\"reason\\":\\"startup_timeout\\",\\"create_error\\":%lu}\\n",created?"true":"false",created?0:GetLastError());
+    for(unsigned i=0;i<80;i++){if(steam_process_running()){printf("{\"event\":\"steam_client_presence\",\"running\":true,\"started_by_host\":%s}\n",created?"true":"false");return true;}Sleep(250);}
+    printf("{\"event\":\"steam_client_presence\",\"running\":false,\"started_by_host\":%s,\"reason\":\"startup_timeout\",\"create_error\":%lu}\n",created?"true":"false",created?0:GetLastError());
     return false;
 }
 static uint64_t input_cursor=0,input_reads=0;
