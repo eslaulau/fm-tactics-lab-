@@ -93,9 +93,12 @@ jobs:
         run: |
           $exe = (Resolve-Path "dist/FM27-Tactics-Lab-v1112-NoSteamBootstrap.exe").Path
           $testData = Join-Path $PWD "build/self-test-data"
-          & $exe --self-test --data-dir "$testData"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged EXE self-test failed with exit code $LASTEXITCODE"
+          $process = Start-Process -FilePath $exe -ArgumentList @("--self-test", "--data-dir", $testData) -Wait -PassThru -NoNewWindow
+          Write-Host "Packaged EXE exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            $errorLog = Join-Path $testData "startup-error.txt"
+            if (Test-Path $errorLog) { Get-Content -LiteralPath $errorLog }
+            throw "Packaged EXE self-test failed with exit code $($process.ExitCode)"
           }
           $resultPath = Join-Path $testData "self-test.json"
           if (-not (Test-Path $resultPath)) {
