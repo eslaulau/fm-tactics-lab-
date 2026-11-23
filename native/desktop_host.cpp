@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <tlhelp32.h>
 #include <io.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -19,6 +20,7 @@
 static std::recursive_mutex worker_log_lock;
 #include "fm27_tactic_bindings.h"
 #pragma comment(lib,"bcrypt.lib")
+#pragma comment(lib,"advapi32.lib")
 
 // Headless native match host. This intentionally retains the complete, unchanged
 // licensed native library; it is NOT a physically reduced engine binary.
@@ -36,6 +38,49 @@ static fs::path worker_manifest;static bool worker_bootstrapped=false;
 static ULONGLONG timing_start=0,timing_loaded=0,timing_active=0,timing_prepare=0,timing_ready=0;
 static FILE* log_file;
 static unsigned char* native_base;
+
+// Start the genuine Steam client before creating the isolated match desktop.
+// This does not synthesize ownership, login, tickets, or SteamAPI success;
+// the game's own Steamworks initialization remains authoritative.
+static bool steam_process_running(){
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(snapshot==INVALID_HANDLE_VALUE)return false;
+    PROCESSENTRY32W entry={};entry.dwSize=sizeof(entry);
+    bool found=false;
+    if(Process32FirstW(snapshot,&entry))do{
+        if(_wcsicmp(entry.szExeFile,L"steam.exe")==0){found=true;break;}
+    }while(Process32NextW(snapshot,&entry));
+    CloseHandle(snapshot);return found;
+}
+static bool ensure_steam_client(){
+    if(steam_process_running()){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":true,\\"started_by_host\\":false}\\n");return true;}
+    wchar_t path[32768]={};
+    if(GetEnvironmentVariableW(L"FM27_STEAM_EXE",path,(DWORD)(sizeof(path)/sizeof(path[0])))==0){
+        DWORD bytes=(DWORD)sizeof(path);
+        if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam",L"SteamExe",RRF_RT_REG_SZ,nullptr,path,&bytes)!=ERROR_SUCCESS){
+            wchar_t root[32768]={};bytes=(DWORD)sizeof(root);
+            if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam",L"SteamPath",RRF_RT_REG_SZ,nullptr,root,&bytes)==ERROR_SUCCESS){
+                fs::path candidate=fs::path(root)/L"steam.exe";
+                if(candidate.native().size()<sizeof(path)/sizeof(path[0]))wcscpy_s(path,candidate.c_str());
+            }
+        }
+    }
+    if(!path[0]){
+        const wchar_t* envs[]={L"ProgramFiles(x86)",L"ProgramFiles",L"LOCALAPPDATA"};
+        for(const auto* name:envs){wchar_t root[32768]={};if(!GetEnvironmentVariableW(name,root,(DWORD)(sizeof(root)/sizeof(root[0]))))continue;
+            fs::path candidate=fs::path(root)/(wcscmp(name,L"LOCALAPPDATA")==0?L"Programs/Steam/steam.exe":L"Steam/steam.exe");
+            if(fs::exists(candidate)){wcscpy_s(path,candidate.c_str());break;}
+        }
+    }
+    if(!path[0]||!fs::exists(path)){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":false,\\"started_by_host\\":false,\\"reason\\":\\"steam_executable_not_found\\"}\\n");return false;}
+    std::wstring command=L"\\""+std::wstring(path)+L"\\" -silent";
+    STARTUPINFOW startup={};startup.cb=sizeof(startup);PROCESS_INFORMATION process={};
+    BOOL created=CreateProcessW(path,command.data(),nullptr,nullptr,FALSE,0,nullptr,fs::path(path).parent_path().c_str(),&startup,&process);
+    if(created){CloseHandle(process.hThread);CloseHandle(process.hProcess);}
+    for(unsigned i=0;i<80;i++){if(steam_process_running()){printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":true,\\"started_by_host\\":%s}\\n",created?"true":"false");return true;}Sleep(250);}
+    printf("{\\"event\\":\\"steam_client_presence\\",\\"running\\":false,\\"started_by_host\\":%s,\\"reason\\":\\"startup_timeout\\",\\"create_error\\":%lu}\\n",created?"true":"false",created?0:GetLastError());
+    return false;
+}
 static uint64_t input_cursor=0,input_reads=0;
 #include "native_steam_lifecycle.h"
 static void* at(uintptr_t rva){
@@ -1044,6 +1089,7 @@ int wmain(int argc,wchar_t** argv){
     if(!check_image.empty()){log_file=stdout;return known_image(check_image)?0:99;}
     if(!desktop_cancel_name.empty()){desktop_cancel_event=OpenEventW(SYNCHRONIZE|EVENT_MODIFY_STATE,FALSE,desktop_cancel_name.c_str());if(!desktop_cancel_event)return 181;}
     if(is_child){unsigned status=child(true);desktop_finish_and_exit(status);}
+    if(!ensure_steam_client())return 97;
     wchar_t desktop_name[96];swprintf_s(desktop_name,L"FmEngineControl_%lu",GetCurrentProcessId());
     auto desktop=CreateDesktopW(desktop_name,nullptr,nullptr,0,GENERIC_ALL,nullptr);
     if(!desktop){printf("desktop_create_error=%lu\n",GetLastError());return 83;}
