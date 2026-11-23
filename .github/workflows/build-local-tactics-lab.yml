@@ -25,6 +25,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Set up Node.js for frontend tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Configure x64 MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
