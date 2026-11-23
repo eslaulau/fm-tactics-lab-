@@ -88,6 +88,25 @@ jobs:
           Write-Host "Built $targetExe"
           Get-FileHash -LiteralPath $targetExe -Algorithm SHA256
 
+      - name: Smoke-test the packaged desktop EXE
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "dist/FM27-Tactics-Lab-v1112-NoSteamBootstrap.exe").Path
+          $testData = Join-Path $PWD "build/self-test-data"
+          & $exe --self-test --data-dir "$testData"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged EXE self-test failed with exit code $LASTEXITCODE"
+          }
+          $resultPath = Join-Path $testData "self-test.json"
+          if (-not (Test-Path $resultPath)) {
+            throw "Packaged EXE did not produce self-test.json"
+          }
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          if (-not $result.ok) {
+            throw "Packaged EXE reported an unsuccessful self-test"
+          }
+          Write-Host "Packaged EXE started its backend and passed endpoint checks."
+
       - name: Upload Windows EXE artifact
         uses: actions/upload-artifact@v4
         with:
