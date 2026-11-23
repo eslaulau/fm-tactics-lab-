@@ -2,6 +2,7 @@
 
 - Adds an in-app local native-engine acceptance action. It runs one bundled baseline fixture through the selected FM27 `game_plugin.dll` and requires a naturally completed match, native statistics, timing evidence, compatibility checks, and successful session cleanup before reporting success.
 - The acceptance action is separate from the CI startup self-test. CI does not contain a licensed local FM27 installation and therefore cannot claim a real match was run.
+- The result panel saves the full native JSONL log path so failures can be diagnosed without treating startup or compatibility checks as a completed match.
 
 # FM Tactics Lab v1108.5
 
