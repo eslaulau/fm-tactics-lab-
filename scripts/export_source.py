@@ -40,12 +40,12 @@ def validate(root=ROOT):
         if not path.resolve().is_relative_to(root.resolve()):
             raise ValueError('Source escapes release directory: ' + str(path))
         if path.relative_to(root).as_posix() in SCREENSHOTS:
-            if not path.read_bytes().startswith(b'\\x89PNG\\r\\n\\x1a\\n'):
+            if not path.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'):
                 raise ValueError('Expected PNG screenshot: ' + str(path))
             continue
         text = path.read_text(encoding='utf-8-sig')
         # Public sources must not contain workstation paths or game code dumps.
-        if re.search(r'[A-Za-z]:[\\\\/]+Users[\\\\/]|F:[\\\\/]+FmEngine', text, re.I):
+        if re.search(r'[A-Za-z]:[\\/]+Users[\\/]|F:[\\/]+FmEngine', text, re.I):
             raise ValueError('Workstation path found: ' + str(path.relative_to(root)))
         if re.search(r'(?:sk-proj-|ghp_|github_pat_)[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----', text):
             raise ValueError('Potential credential found: ' + str(path.relative_to(root)))
@@ -68,7 +68,7 @@ def export(output, root=ROOT):
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in paths:
             archive.write(path, 'fm-tactics-lab/' + path.relative_to(root).as_posix())
-        archive.writestr('fm-tactics-lab/SOURCE_MANIFEST.json', json.dumps(manifest, indent=2) + '\\n')
+        archive.writestr('fm-tactics-lab/SOURCE_MANIFEST.json', json.dumps(manifest, indent=2) + '\n')
     print(json.dumps({'archive': str(output), 'files': len(paths),
                       'sha256': hashlib.sha256(output.read_bytes()).hexdigest()}, indent=2))
 
